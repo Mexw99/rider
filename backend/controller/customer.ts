@@ -3,28 +3,53 @@ import { pool } from "../database/pool";
 
 export const customerRouter = express.Router();
 
-customerRouter.get("/", async (_req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        customer_id,
-        first_name,
-        last_name,
-        phone,
-        address,
-        latitude,
-        longitude,
-        created_at,
-        updated_at
-      FROM customers
-      ORDER BY customer_id
-    `);
+customerRouter.get("/", async (req, res) => {
+  const search =
+    typeof req.query.name === "string" ? req.query.name.trim() : "";
 
-    res.json(result.rows);
+  try {
+    const result = search
+      ? await pool.query(
+          `
+          SELECT
+            customer_id,
+            first_name,
+            last_name,
+            phone,
+            address,
+            latitude,
+            longitude,
+            created_at,
+            updated_at
+          FROM customers
+          WHERE
+            first_name ILIKE $1
+            OR last_name ILIKE $1
+          ORDER BY customer_id
+          `,
+          [`%${search}%`],
+        )
+      : await pool.query(`
+          SELECT
+            customer_id,
+            first_name,
+            last_name,
+            phone,
+            address,
+            latitude,
+            longitude,
+            created_at,
+            updated_at
+          FROM customers
+          ORDER BY customer_id
+        `);
+
+    res.status(200).json(result.rows);
   } catch (error) {
-    console.error("ไม่สามารถแสดงข้อมูลลูกค้าได้:", error);
+    console.error("ไม่สามารถค้นหาข้อมูลลูกค้าได้:", error);
+
     res.status(500).json({
-      message: "ไม่สามารถแสดงข้อมูลลูกค้าได้",
+      message: "ไม่สามารถค้นหาข้อมูลลูกค้าได้",
     });
   }
 });
@@ -246,6 +271,77 @@ customerRouter.patch("/:id", async (req, res) => {
 
     res.status(500).json({
       message: "ไม่สามารถแก้ไขข้อมูลลูกค้าได้",
+    });
+  }
+});
+
+customerRouter.get("/nearby", async (req, res) => {
+  const latitude = Number(req.query.latitude);
+  const longitude = Number(req.query.longitude);
+  const radiusKm = 1;
+
+  if (
+    !Number.isFinite(latitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    !Number.isFinite(longitude) ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    res.status(400).json({
+      message: "latitude หรือ longitude ไม่ถูกต้อง",
+    });
+    return;
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      WITH nearby_customers AS (
+        SELECT
+          customer_id,
+          first_name,
+          last_name,
+          phone,
+          address,
+          latitude,
+          longitude,
+          created_at,
+          updated_at,
+          6371 * 2 * ASIN(
+            SQRT(
+              POWER(SIN(RADIANS(latitude - $1) / 2), 2) +
+              COS(RADIANS($1)) *
+              COS(RADIANS(latitude)) *
+              POWER(SIN(RADIANS(longitude - $2) / 2), 2)
+            )
+          ) AS distance_km
+        FROM customers
+      )
+      SELECT
+        customer_id,
+        first_name,
+        last_name,
+        phone,
+        address,
+        latitude,
+        longitude,
+        created_at,
+        updated_at,
+        distance_km
+      FROM nearby_customers
+      WHERE distance_km <= $3
+      ORDER BY distance_km, customer_id
+      `,
+      [latitude, longitude, radiusKm],
+    );
+
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("ไม่สามารถค้นหาลูกค้าใกล้เคียงได้:", error);
+
+    res.status(500).json({
+      message: "ไม่สามารถค้นหาลูกค้าใกล้เคียงได้",
     });
   }
 });
