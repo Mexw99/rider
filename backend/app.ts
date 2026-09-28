@@ -9,3 +9,4 @@ app.use(express.json());
 app.use("/", index);
 app.use("/customers", customerRouter);
 app.use("/orders", orderRouter);
+export default app;
