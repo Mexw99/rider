@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: http://localhost:3000/orders
+  url: https://rider-six-smoky.vercel.app/orders
   auth: inherit
 
 settings:

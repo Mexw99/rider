@@ -5,7 +5,7 @@ info:
 
 http:
   method: PATCH
-  url: http://localhost:3000/orders/28
+  url: https://rider-six-smoky.vercel.app/orders/28
   auth: inherit
 
 settings:

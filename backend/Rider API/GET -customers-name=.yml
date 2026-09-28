@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: http://localhost:3000/customers?name=ธน
+  url: https://rider-six-smoky.vercel.app/customers?name=ธน
   params:
     - name: name
       value: ธน

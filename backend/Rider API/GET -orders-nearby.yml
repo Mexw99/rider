@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: http://localhost:3000/orders/nearby?latitude=16.2443350&longitude=103.2494546
+  url: https://rider-six-smoky.vercel.app/orders/nearby?latitude=16.2443350&longitude=103.2494546
   params:
     - name: latitude
       value: "16.2443350"
