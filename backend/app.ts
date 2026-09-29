@@ -1,9 +1,18 @@
 import express from "express";
+import cors from "cors";
 import { router as index } from "./controller/index";
 import { customerRouter } from "./controller/customer";
 import { orderRouter } from "./controller/order";
 
 export const app = express();
+
+app.use(
+  cors({
+    origin: "http://localhost:4200",
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
 app.use(express.json());
 app.use("/", index);

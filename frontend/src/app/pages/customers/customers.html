@@ -1,0 +1,88 @@
+<section class="space-y-4">
+  <div>
+    <h1 class="text-2xl font-bold">จัดการข้อมูลลูกค้า</h1>
+    <p class="text-base-content/70">ดูตำแหน่งลูกค้าและจัดการข้อมูล</p>
+  </div>
+
+  <div class="grid min-h-[70vh] grid-cols-1 gap-4 lg:grid-cols-3">
+    <!-- พื้นที่แผนที่ทางซ้าย -->
+    <section
+      class="min-h-[60vh] overflow-hidden rounded-box border border-base-300 bg-base-200 lg:col-span-2"
+    >
+      <div #mapElement class="customer-map"></div>
+    </section>
+
+    <!-- แผงจัดการลูกค้าทางขวา -->
+    <aside class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+      <div role="tablist" class="tabs tabs-box">
+        <button role="tab" class="tab tab-active">ข้อมูลลูกค้า</button>
+        <button role="tab" class="tab">เพิ่ม / แก้ไข</button>
+      </div>
+
+      @if (notification(); as notice) {
+        <div
+          role="alert"
+          class="alert mt-4"
+          [class.alert-success]="notice.type === 'success'"
+          [class.alert-error]="notice.type === 'error'"
+        >
+          <span>{{ notice.message }}</span>
+        </div>
+      }
+
+      <div class="mt-4">
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="text-lg font-semibold">รายชื่อลูกค้า</h2>
+          <span class="badge">{{ customers().length }} คน</span>
+        </div>
+
+        @if (loading()) {
+          <p class="py-4 text-center">กำลังโหลดข้อมูลลูกค้า...</p>
+        } @else if (errorMessage()) {
+          <p class="alert alert-error">{{ errorMessage() }}</p>
+        } @else {
+          <div class="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
+            @for (customer of customers(); track customer.customer_id) {
+              <article class="rounded-box border border-base-300 p-3">
+                <button
+                  type="button"
+                  class="block w-full cursor-pointer text-left"
+                  (click)="focusCustomer(customer)"
+                >
+                  <h3 class="font-semibold">{{ customer.first_name }} {{ customer.last_name }}</h3>
+
+                  <p class="mt-2 text-sm">
+                    <span class="font-medium">เบอร์โทร:</span>
+                    {{ customer.phone }}
+                  </p>
+
+                  <p class="mt-1 text-sm">
+                    <span class="font-medium">ที่อยู่:</span>
+                    {{ customer.address }}
+                  </p>
+                </button>
+
+                <div class="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    class="btn btn-error btn-outline btn-sm"
+                    [disabled]="deletingCustomerId() !== null"
+                    (click)="deleteCustomer(customer)"
+                  >
+                    @if (deletingCustomerId() === customer.customer_id) {
+                      กำลังลบ...
+                    } @else {
+                      ลบลูกค้า
+                    }
+                  </button>
+                </div>
+              </article>
+            } @empty {
+              <p class="py-4 text-center text-base-content/70">ยังไม่มีข้อมูลลูกค้า</p>
+            }
+          </div>
+        }
+      </div>
+    </aside>
+  </div>
+</section>

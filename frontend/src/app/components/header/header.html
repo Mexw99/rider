@@ -1,0 +1,20 @@
+<header class="navbar bg-base-100 shadow-sm">
+  <div class="flex-1">
+    <span class="text-xl font-bold">Rider</span>
+  </div>
+
+  <nav class="tabs tabs-box">
+    <a
+      routerLink="/customers"
+      routerLinkActive="tab-active"
+      [routerLinkActiveOptions]="{ exact: true }"
+      class="tab"
+    >
+      ลูกค้า
+    </a>
+
+    <a routerLink="/orders" routerLinkActive="tab-active" class="tab"> ออเดอร์ </a>
+
+    <a routerLink="/delivery-routes" routerLinkActive="tab-active" class="tab"> เส้นทางจัดส่ง </a>
+  </nav>
+</header>

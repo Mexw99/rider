@@ -157,7 +157,7 @@ customerRouter.delete("/:id", async (req, res) => {
 
     const databaseError = error as { code?: string };
 
-    if (databaseError.code === "23503") {
+    if (databaseError.code === "23001" || databaseError.code === "23503") {
       res.status(409).json({
         message: "ไม่สามารถลบลูกค้าที่มีรายการสั่งซื้ออยู่ได้",
       });
