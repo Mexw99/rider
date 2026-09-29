@@ -27,6 +27,7 @@ export class Customers implements OnInit, AfterViewInit, OnDestroy {
   private readonly customerApi = inject(CustomerApi);
   private map?: L.Map;
   private customerMarkerLayer?: L.LayerGroup;
+  private draftLocationMarker?: L.CircleMarker;
   private readonly customerMarkers = new Map<number, L.Marker>();
 
   protected readonly customers = signal<Customer[]>([]);
@@ -39,7 +40,9 @@ export class Customers implements OnInit, AfterViewInit, OnDestroy {
   } | null>(null);
 
   protected readonly deletingCustomerId = signal<number | null>(null);
+  protected readonly savingCustomer = signal(false);
   protected readonly editingCustomer = signal<Customer | null>(null);
+  protected readonly addingCustomer = signal(false);
   protected readonly pickingLocation = signal(false);
 
   protected editForm = {
@@ -71,6 +74,40 @@ export class Customers implements OnInit, AfterViewInit, OnDestroy {
     ).addTo(this.map);
 
     this.customerMarkerLayer = L.layerGroup().addTo(this.map);
+
+    this.map.on('click', (event: L.LeafletMouseEvent) => {
+      if (!this.pickingLocation()) {
+        return;
+      }
+
+      const map = this.map;
+
+      if (!map) {
+        return;
+      }
+
+      this.editForm = {
+        ...this.editForm,
+        latitude: String(event.latlng.lat),
+        longitude: String(event.latlng.lng),
+      };
+
+      this.draftLocationMarker?.remove();
+      this.draftLocationMarker = L.circleMarker(event.latlng, {
+        radius: 8,
+        color: '#ffffff',
+        weight: 2,
+        fillColor: '#f97316',
+        fillOpacity: 1,
+      }).addTo(map);
+
+      this.pickingLocation.set(false);
+      this.notification.set({
+        type: 'success',
+        message: 'เลือกตำแหน่งใหม่แล้ว กดบันทึกเพื่อยืนยัน',
+      });
+    });
+
     this.renderCustomerMarkers();
   }
 
@@ -230,6 +267,25 @@ export class Customers implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
+  protected startAddingCustomer(): void {
+    this.editingCustomer.set(null);
+    this.addingCustomer.set(true);
+    this.pickingLocation.set(false);
+    this.notification.set(null);
+
+    this.draftLocationMarker?.remove();
+    this.draftLocationMarker = undefined;
+
+    this.editForm = {
+      first_name: '',
+      last_name: '',
+      phone: '',
+      address: '',
+      latitude: '',
+      longitude: '',
+    };
+  }
+
   protected startEditing(customer: Customer): void {
     this.editingCustomer.set(customer);
 
@@ -247,8 +303,169 @@ export class Customers implements OnInit, AfterViewInit, OnDestroy {
     this.focusCustomer(customer);
   }
 
+  protected async saveCustomer(): Promise<void> {
+    const customer = this.editingCustomer();
+
+    if (!customer) {
+      return;
+    }
+
+    const latitude = Number(this.editForm.latitude);
+    const longitude = Number(this.editForm.longitude);
+
+    if (
+      !this.editForm.first_name.trim() ||
+      !this.editForm.last_name.trim() ||
+      !this.editForm.phone.trim() ||
+      !this.editForm.address.trim() ||
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      this.notification.set({
+        type: 'error',
+        message: 'กรุณากรอกข้อมูลให้ครบ และตรวจสอบพิกัดให้ถูกต้อง',
+      });
+      return;
+    }
+
+    this.notification.set(null);
+    this.savingCustomer.set(true);
+
+    try {
+      const updatedCustomer = await this.customerApi.updateCustomer(customer.customer_id, {
+        first_name: this.editForm.first_name.trim(),
+        last_name: this.editForm.last_name.trim(),
+        phone: this.editForm.phone.trim(),
+        address: this.editForm.address.trim(),
+        latitude: String(latitude),
+        longitude: String(longitude),
+      });
+
+      this.customers.update((customers) =>
+        customers.map((item) =>
+          item.customer_id === updatedCustomer.customer_id ? updatedCustomer : item,
+        ),
+      );
+
+      this.renderCustomerMarkers();
+      this.cancelEditing();
+
+      this.notification.set({
+        type: 'success',
+        message: 'บันทึกการแก้ไขข้อมูลลูกค้าแล้ว',
+      });
+
+      this.focusCustomer(updatedCustomer);
+    } catch (error) {
+      console.error('ไม่สามารถแก้ไขข้อมูลลูกค้าได้:', error);
+
+      let message = 'แก้ไขข้อมูลลูกค้าไม่สำเร็จ กรุณาลองใหม่';
+
+      if (error instanceof HttpErrorResponse) {
+        if (error.status === 0) {
+          message = 'ติดต่อ Backend ไม่ได้ กรุณาตรวจสอบว่าเซิร์ฟเวอร์กำลังทำงาน';
+        } else if (error.status === 404) {
+          message = 'ไม่พบข้อมูลลูกค้าที่ต้องการแก้ไข อาจถูกลบไปแล้ว';
+        } else if (typeof error.error?.message === 'string') {
+          message = error.error.message;
+        } else {
+          message = `Backend เกิดข้อผิดพลาด (HTTP ${error.status})`;
+        }
+      }
+
+      this.notification.set({ type: 'error', message });
+    } finally {
+      this.savingCustomer.set(false);
+    }
+  }
+
+  protected async createCustomer(): Promise<void> {
+    const latitude = Number(this.editForm.latitude);
+    const longitude = Number(this.editForm.longitude);
+
+    if (
+      !this.editForm.first_name.trim() ||
+      !this.editForm.last_name.trim() ||
+      !this.editForm.phone.trim() ||
+      !this.editForm.address.trim() ||
+      !this.editForm.latitude ||
+      !this.editForm.longitude ||
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      this.notification.set({
+        type: 'error',
+        message: 'กรุณากรอกข้อมูลให้ครบ และเลือกตำแหน่งลูกค้าบนแผนที่',
+      });
+      return;
+    }
+
+    this.notification.set(null);
+    this.savingCustomer.set(true);
+
+    try {
+      const newCustomer = await this.customerApi.createCustomer({
+        first_name: this.editForm.first_name.trim(),
+        last_name: this.editForm.last_name.trim(),
+        phone: this.editForm.phone.trim(),
+        address: this.editForm.address.trim(),
+        latitude: String(latitude),
+        longitude: String(longitude),
+      });
+
+      this.customers.update((customers) => [...customers, newCustomer]);
+      this.renderCustomerMarkers();
+      this.cancelEditing();
+
+      this.notification.set({
+        type: 'success',
+        message: `เพิ่มข้อมูลลูกค้า ${newCustomer.first_name} ${newCustomer.last_name} แล้ว`,
+      });
+
+      this.focusCustomer(newCustomer);
+    } catch (error) {
+      console.error('ไม่สามารถเพิ่มข้อมูลลูกค้าได้:', error);
+
+      let message = 'เพิ่มข้อมูลลูกค้าไม่สำเร็จ กรุณาลองใหม่';
+
+      if (error instanceof HttpErrorResponse) {
+        if (error.status === 0) {
+          message = 'ติดต่อ Backend ไม่ได้ กรุณาตรวจสอบว่าเซิร์ฟเวอร์กำลังทำงาน';
+        } else if (typeof error.error?.message === 'string') {
+          message = error.error.message;
+        } else {
+          message = `Backend เกิดข้อผิดพลาด (HTTP ${error.status})`;
+        }
+      }
+
+      this.notification.set({ type: 'error', message });
+    } finally {
+      this.savingCustomer.set(false);
+    }
+  }
+
   protected cancelEditing(): void {
     this.editingCustomer.set(null);
+    this.addingCustomer.set(false);
     this.pickingLocation.set(false);
+    this.draftLocationMarker?.remove();
+    this.draftLocationMarker = undefined;
+  }
+
+  protected startPickingLocation(): void {
+    if (!this.editingCustomer() && !this.addingCustomer()) {
+      return;
+    }
+
+    this.notification.set(null);
+    this.pickingLocation.set(true);
   }
 }

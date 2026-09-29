@@ -5,15 +5,12 @@ import { Api } from '../../config/api';
 import { Customer } from '../../model/customer.model';
 
 type CustomerUpdate = Partial<
-  Pick<
-    Customer,
-    | 'first_name'
-    | 'last_name'
-    | 'phone'
-    | 'address'
-    | 'latitude'
-    | 'longitude'
-  >
+  Pick<Customer, 'first_name' | 'last_name' | 'phone' | 'address' | 'latitude' | 'longitude'>
+>;
+
+type CustomerCreate = Pick<
+  Customer,
+  'first_name' | 'last_name' | 'phone' | 'address' | 'latitude' | 'longitude'
 >;
 
 interface DeleteCustomerResponse {
@@ -33,20 +30,18 @@ export class CustomerApi {
     return await lastValueFrom(this.http.get<Customer[]>(url));
   }
 
-  async updateCustomer(
-    customerId: number,
-    changes: CustomerUpdate,
-  ): Promise<Customer> {
+  async createCustomer(customer: CustomerCreate): Promise<Customer> {
+    const url = `${this.api.API_ENDPOINT}/customers`;
+    return await lastValueFrom(this.http.post<Customer>(url, customer));
+  }
+
+  async updateCustomer(customerId: number, changes: CustomerUpdate): Promise<Customer> {
     const url = `${this.api.API_ENDPOINT}/customers/${customerId}`;
     return await lastValueFrom(this.http.patch<Customer>(url, changes));
   }
 
-  async deleteCustomer(
-    customerId: number,
-  ): Promise<DeleteCustomerResponse> {
+  async deleteCustomer(customerId: number): Promise<DeleteCustomerResponse> {
     const url = `${this.api.API_ENDPOINT}/customers/${customerId}`;
-    return await lastValueFrom(
-      this.http.delete<DeleteCustomerResponse>(url),
-    );
+    return await lastValueFrom(this.http.delete<DeleteCustomerResponse>(url));
   }
 }
