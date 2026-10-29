@@ -73,6 +73,22 @@ export class DeliveryRoutes implements OnInit {
       cost.foodCost - cost.dispatchCost - cost.estimatedPenalty, 0).toFixed(2));
     return { food: sum('foodCost'), dispatch: sum('dispatchCost'), transport };
   });
+  protected readonly riderFinancials = computed(() =>
+    (this.planResult()?.trips ?? []).map((trip) => ({
+      riderId: trip.riderId,
+      riderName: trip.riderName,
+      orderCount: trip.route.stops.length,
+      totalBoxes: trip.totalBoxes,
+      distanceKm: trip.route.totalDistanceKm,
+      revenue: trip.cost.revenue,
+      foodCost: trip.cost.foodCost,
+      dispatchCost: trip.cost.dispatchCost,
+      transportCost: trip.cost.transportCost,
+      estimatedPenalty: trip.cost.estimatedPenalty,
+      totalCost: trip.cost.totalCost,
+      profit: trip.cost.profit,
+    })),
+  );
   protected readonly planError = signal('');
   protected readonly calculationTime = signal('');
   protected readonly usedRiderCount = computed(

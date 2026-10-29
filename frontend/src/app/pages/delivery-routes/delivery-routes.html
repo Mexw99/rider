@@ -291,6 +291,52 @@
         </div>
       </details>
 
+      @if (riderFinancials().length > 0) {
+        <section class="mt-4 rounded-box border border-base-300 bg-base-100 p-4" aria-labelledby="rider-financials-title">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 id="rider-financials-title" class="font-semibold">รายได้และค่าใช้จ่ายราย Rider</h3>
+              <p class="mt-1 text-xs text-base-content/60">
+                ค่าใช้จ่ายของ Rider 1 รอบ = ต้นทุนอาหาร + ค่าเรียก Rider + ค่าเดินทาง + ค่าปรับคาดการณ์
+              </p>
+            </div>
+            <span class="badge badge-outline">คิดจากแผนที่เลือก</span>
+          </div>
+          <div class="mt-3 grid gap-3 xl:grid-cols-2">
+            @for (rider of riderFinancials(); track rider.riderId) {
+              <article class="rounded-box border border-base-300 p-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 class="font-semibold">{{ rider.riderName }}</h4>
+                    <p class="text-xs text-base-content/60">
+                      {{ rider.orderCount }} ออเดอร์ · {{ rider.totalBoxes }} กล่อง · {{ rider.distanceKm | number:'1.2-2' }} กม.
+                    </p>
+                  </div>
+                  <div class="text-right">
+                    <p class="text-xs text-base-content/60">ค่าใช้จ่ายรวม</p>
+                    <p class="font-semibold">{{ rider.totalCost | number:'1.2-2' }} บาท</p>
+                  </div>
+                </div>
+                <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                  <div><dt class="text-base-content/60">รายได้</dt><dd>{{ rider.revenue | number:'1.2-2' }} บาท</dd></div>
+                  <div><dt class="text-base-content/60">ค่าเรียก Rider</dt><dd>{{ rider.dispatchCost | number:'1.2-2' }} บาท</dd></div>
+                  <div><dt class="text-base-content/60">ต้นทุนอาหาร</dt><dd>{{ rider.foodCost | number:'1.2-2' }} บาท</dd></div>
+                  <div><dt class="text-base-content/60">ค่าเดินทาง</dt><dd>{{ rider.transportCost | number:'1.2-2' }} บาท</dd></div>
+                  <div><dt class="text-base-content/60">ค่าปรับคาดการณ์</dt><dd>{{ rider.estimatedPenalty | number:'1.2-2' }} บาท</dd></div>
+                  <div><dt class="text-base-content/60">กำไรสุทธิรอบนี้</dt><dd class="font-semibold">{{ rider.profit | number:'1.2-2' }} บาท</dd></div>
+                </dl>
+                <p class="mt-3 border-t border-base-300 pt-2 text-xs text-base-content/60">
+                  สูตร: {{ rider.totalBoxes }} กล่อง × 65 = {{ rider.revenue | number:'1.2-2' }} บาทรายได้ ·
+                  ต้นทุน {{ rider.foodCost | number:'1.2-2' }} + {{ rider.dispatchCost | number:'1.2-2' }} +
+                  {{ rider.transportCost | number:'1.2-2' }} + {{ rider.estimatedPenalty | number:'1.2-2' }} =
+                  {{ rider.totalCost | number:'1.2-2' }} บาท
+                </p>
+              </article>
+            }
+          </div>
+        </section>
+      }
+
       @for (warning of plan.warnings; track $index) {
         <p class="mt-2 text-sm text-warning" role="status">
           {{ warning }}

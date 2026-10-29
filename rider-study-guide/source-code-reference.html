@@ -1,0 +1,736 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Source Code Reference ระบบ Rider</title><link rel="stylesheet" href="styles.css"></head><body>
+<nav><strong>Rider Study Guide</strong><a href="index.html">ภาพรวม</a><a href="code.html">อ่านโค้ด</a><a href="calculation.html">การคำนวณ</a><a href="database.html">Database/UML/DFD</a><a href="exam-qa.html">คำถามอาจารย์</a><a href="deep-dive.html">เจาะลึกโค้ด</a><a href="source-code-reference.html">โค้ดจริง</a></nav><main>
+<section class="lead"><span class="tag">Source Code Reference</span><h1>โค้ดจริงจากโปรเจกต์และคำอธิบายทีละส่วน</h1><p>หน้านี้คัดโค้ดจริงจากไฟล์ใน Workspace มาแสดงเป็นช่วง ๆ โดยระบุพาธไฟล์และอธิบาย Input, Process, Output และผลต่อหน้าจอ</p><p><strong>อ่านอย่างไร:</strong> อ่านกล่อง “โค้ดจริง” ก่อน แล้วอ่านคำอธิบายใต้กล่อง จากนั้นค่อยเปิดไฟล์จริงเพื่อดูบริบทก่อน/หลังช่วงโค้ดนั้น</p></section>
+<h2>1. Angular Route: URL ไป Component</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/app.routes.ts</code></p><pre>import { Routes } from '@angular/router';
+import { Customers } from './pages/customers/customers';
+import { Orders } from './pages/orders/orders';
+import { DeliveryRoutes } from './pages/delivery-routes/delivery-routes';
+import { RiderLogin } from './pages/rider-login/rider-login';
+import { RiderWork } from './pages/rider-work/rider-work';
+import { Riders } from './pages/riders/riders';
+import { riderSessionGuard } from './guards/rider-session.guard';
+import { riderLoginGuard } from './guards/rider-login.guard';
+
+export const routes: Routes = [
+  { path: '', redirectTo: 'customers', pathMatch: 'full' },
+  { path: 'customers', component: Customers },
+  { path: 'orders', component: Orders },
+  { path: 'delivery-routes', component: DeliveryRoutes },
+  { path: 'riders', component: Riders },
+  { path: 'rider/login', component: RiderLogin, canActivate: [riderLoginGuard] },
+  { path: 'login', component: RiderLogin, canActivate: [riderLoginGuard] },
+  { path: 'rider/work', component: RiderWork, canActivate: [riderSessionGuard] },
+];</pre><div class="card"><p><strong>อธิบายทีละส่วน:</strong></p><ul><li><code>Routes</code> คือ TypeScript type ของรายการเส้นทาง</li><li>แต่ละ Object มี <code>path</code> และ Component ที่ต้องแสดง</li><li><code>rider/login</code> ใช้ Guard ตรวจว่าผู้ใช้มี Code อยู่แล้วหรือไม่</li><li><code>rider/work</code> ใช้ <code>riderSessionGuard</code> กันไม่ให้เปิดใบงานโดยไม่มี Worksheet Code</li><li>การเปิด URL ไม่ได้เรียก Backend ทันที แต่ Angular เลือก Component ก่อน แล้ว Component จึงเรียก Service</li></ul></div>
+<h2>2. Backend App: CORS และ Mount API</h2><p class="small">ไฟล์จริง: <code>backend/app.ts</code></p><pre>export const app = express();
+
+const allowedOrigins = new Set([
+  "http://localhost:4200",
+  "https://frontend-rider-neon.vercel.app",
+]);
+
+app.use(cors({
+  origin: (origin, callback) =&gt; {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(\`Origin is not allowed: \${origin}\`));
+  },
+  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-worksheet-code"],
+  optionsSuccessStatus: 204,
+}));
+
+app.use(express.json());
+app.use("/customers", customerRouter);
+app.use("/orders", orderRouter);
+app.use("/rider/auth", riderAuthRouter);
+app.use("/rider", riderRouter);
+app.use("/route-plans", routePlanRouter);
+app.use("/route-stops", routeStopRouter);</pre><div class="card"><p><strong>สิ่งที่เกิดขึ้น:</strong> ถ้า Frontend จาก Origin ที่อนุญาตส่ง Request มา CORS จะเติม Response Header ให้ Browser ยอมอ่านผล ถ้า Request ใช้ Header <code>x-worksheet-code</code> Browser อาจส่ง OPTIONS Preflight ก่อน ดังนั้นต้องประกาศ Header และ Method ให้ตรง</p><p><strong>ทำไม Path ถึงเป็น <code>/rider/auth/worksheet</code>:</strong> Router ถูก Mount ด้วย <code>app.use("/rider/auth", riderAuthRouter)</code> และภายใน Router เขียน <code>post("/worksheet")</code> จึงรวมกันเป็น Path นี้</p></div>
+<h2>3. Backend Road Matrix Endpoint</h2><p class="small">ไฟล์จริง: <code>backend/controller/route-plan.ts</code></p><pre>routePlanRouter.post("/road-matrix", async (req, res) =&gt; {
+  try {
+    const points = parseRoadPoints(req.body?.points);
+    res.json(await getRoadDistanceMatrix(points));
+  } catch (error) {
+    if (error instanceof RoadMatrixError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
+    res.status(503).json({
+      message: "โหลดระยะทางถนนไม่สำเร็จ กรุณาลองใหม่"
+    });
+  }
+});</pre><div class="card"><p><strong>Input:</strong> JSON Body เช่น <code>{ points: [{latitude, longitude}, ...] }</code></p><p><strong>Process:</strong> ตรวจพิกัด แล้วเรียก Service ที่ติดต่อ OSRM</p><p><strong>Output:</strong> JSON ที่มี <code>points</code>, <code>distancesKm</code> และ <code>distanceBasis: "road"</code></p><p><strong>ทำไมแยก Controller กับ Service:</strong> Controller ดูแล HTTP/Status ส่วน Service ดูแลรายละเอียด OSRM และ Cache</p></div>
+<h2>4. Road Matrix Service: Validate, OSRM และ Cache</h2><p class="small">ไฟล์จริง: <code>backend/services/road-matrix.ts</code></p><pre>const cache = new Map&lt;string, {
+  expires: number;
+  matrix: RoadDistanceMatrix
+}&gt;();
+
+const CACHE_TTL_MS = 60 * 60 * 1000;
+
+export function parseRoadPoints(value: unknown): RoadCoordinate[] {
+  if (!Array.isArray(value) || value.length &lt; 2 || value.length &gt; 31) {
+    throw new RoadMatrixError(400,
+      "ระยะทางตามถนนรองรับร้านและจุดส่ง 1–30 จุด");
+  }
+
+  return value.map((point: unknown) =&gt; {
+    const { latitude, longitude } =
+      point as Record&lt;string, unknown&gt;;
+
+    if (typeof latitude !== "number" ||
+        typeof longitude !== "number" ||
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        Math.abs(latitude) &gt; 90 ||
+        Math.abs(longitude) &gt; 180) {
+      throw new RoadMatrixError(400,
+        "พิกัดสำหรับคำนวณถนนไม่ถูกต้อง");
+    }
+
+    return { latitude, longitude };
+  });
+}</pre><pre>export async function getRoadDistanceMatrix(
+  input: readonly RoadCoordinate[]
+): Promise&lt;RoadDistanceMatrix&gt; {
+  const points = parseRoadPoints(input);
+  const key = JSON.stringify(points);
+  const cached = cache.get(key);
+
+  if (cached &amp;&amp; cached.expires &gt; Date.now()) {
+    return structuredClone(cached.matrix);
+  }
+
+  const coordinates = points
+    .map(point =&gt; \`\${point.longitude},\${point.latitude}\`)
+    .join(";");
+
+  const response = await fetch(
+    \`https://router.project-osrm.org/table/v1/driving/\${coordinates}?annotations=distance\`,
+    { signal: AbortSignal.timeout(8000) }
+  );
+
+  const data = await response.json();
+  const distancesKm = data.distances.map(
+    (row: number[]) =&gt; row.map(distance =&gt; distance / 1000)
+  );
+
+  const matrix = {
+    points,
+    distancesKm,
+    distanceBasis: "road" as const
+  };
+
+  cache.set(key, {
+    expires: Date.now() + CACHE_TTL_MS,
+    matrix
+  });
+
+  return matrix;
+}</pre><div class="card"><p><strong>จุดสำคัญ:</strong></p><ul><li>OSRM ใช้พิกัดรูปแบบ <code>longitude,latitude</code> ใน URL</li><li>OSRM คืนระยะทางเป็นเมตร จึงหาร 1000 เป็นกิโลเมตร</li><li>Matrix เป็นตารางระยะทางทุกคู่ของจุด</li><li>Cache ลดการเรียก OSRM ซ้ำเมื่อพิกัดชุดเดิม</li><li>Cache เป็นหน่วยความจำของ Process ไม่ใช่ข้อมูลถาวรใน PostgreSQL</li></ul></div>
+<h2>5. Delivery Routes: โหลดข้อมูล</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/delivery-routes/delivery-routes.ts</code></p><pre>protected async loadPlanningData(): Promise&lt;void&gt; {
+  this.dataLoading.set(true);
+  this.dataError.set("");
+
+  try {
+    const context = await this.routeApi.getPlanningStore();
+    const date = context.businessDate;
+
+    const [orders, riders, savedPlans] =
+      await Promise.all([
+        this.orderApi.getOrders(date),
+        this.riderApi.getRiders(),
+        this.routeApi.getRoutePlans(date, ""),
+      ]);
+
+    const store = {
+      id: context.store.store_id,
+      name: context.store.store_name,
+      latitude: Number(context.store.latitude),
+      longitude: Number(context.store.longitude),
+    };
+
+    const prepared =
+      preparePlanningOrders(store, date, orders);
+
+    const available =
+      riders.filter(rider =&gt; rider.status === "AVAILABLE");
+
+    this.preparedOrders.set(prepared);
+    this.availableRiders.set(available);
+    this.store.set(store);
+    this.businessDate.set(context.businessDate);
+  } catch (error) {
+    this.dataError.set("โหลดข้อมูลวางแผนไม่สำเร็จ");
+  } finally {
+    this.dataLoading.set(false);
+  }
+}</pre><div class="card"><p>ฟังก์ชันนี้เป็นจุดรวมข้อมูลก่อนคำนวณ วันที่ไม่ได้สร้างจากเครื่องผู้ใช้ แต่รับจาก <code>planning-store</code> ของ Backend เพื่อให้หน้า Orders และหน้า Routes ใช้วันธุรกิจเดียวกัน</p><p><code>Promise.all</code> ทำให้โหลด Orders, Riders และ Saved Plans พร้อมกัน ถ้าหนึ่งตัวล้มเหลวจะเข้า <code>catch</code> และไม่ควรแสดงผลเหมือนข้อมูลครบ</p></div>
+<h2>6. Delivery Routes: กดคำนวณ</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/delivery-routes/delivery-routes.ts</code></p><pre>protected async calculatePlan(): Promise&lt;void&gt; {
+  if (this.busy() || this.confirmation()) return;
+  await this.loadPlanningData();
+
+  const prepared = this.preparedOrders();
+  const store = this.store();
+  if (!prepared || !store) return;
+
+  const orders = prepared.items
+    .map(item =&gt; item.routing)
+    .sort((a, b) =&gt; a.orderId - b.orderId);
+
+  const points = [
+    store,
+    ...orders
+  ].map(({ latitude, longitude }) =&gt; ({
+    latitude, longitude
+  }));
+
+  const matrix =
+    await this.routeApi.getRoadMatrix(points);
+
+  const results = optimizeDeliveryRoutes(
+    store,
+    orders,
+    this.availableRiders(),
+    matrix
+  );
+
+  this.planAlternatives.set(results);
+  this.selectedAlternativeId.set(results[0].id);
+}</pre><div class="card"><p><strong>สิ่งที่สำคัญ:</strong> โค้ดนี้ยังไม่ได้บันทึกลง Database การคำนวณเป็นผลชั่วคราวใน Angular Signal ก่อน ร้านต้องเลือกและกด Confirm จึงจะบันทึกจริง</p></div>
+<h2>7. Route Distance: สูตร Haversine ในโค้ดจริง</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/delivery-routes/planning/route-distance.ts</code></p><pre>const EARTH_RADIUS_KM = 6371;
+
+function toRadians(degrees: number): number {
+  return degrees * Math.PI / 180;
+}
+
+export function calculateDistanceKm(
+  start: Coordinate,
+  end: Coordinate
+): number {
+  const latitude1 = toRadians(start.latitude);
+  const latitude2 = toRadians(end.latitude);
+  const deltaLatitude =
+    toRadians(end.latitude - start.latitude);
+  const deltaLongitude =
+    toRadians(end.longitude - start.longitude);
+
+  const a =
+    Math.sin(deltaLatitude / 2) ** 2 +
+    Math.cos(latitude1) *
+    Math.cos(latitude2) *
+    Math.sin(deltaLongitude / 2) ** 2;
+
+  const limitedA = Math.min(1, Math.max(0, a));
+  const centralAngle =
+    2 * Math.atan2(
+      Math.sqrt(limitedA),
+      Math.sqrt(1 - limitedA)
+    );
+
+  return EARTH_RADIUS_KM * centralAngle;
+}</pre><p>สูตรนี้ใช้ดูระยะห่างเชิงภูมิศาสตร์ ไม่ใช่เส้นทางรถจริง ในระบบจึงใช้เป็นพื้นฐาน/ทางสำรอง ส่วนแผนถนนจริงใช้ OSRM</p>
+<h2>8. Route Distance: รวมร้าน → ลูกค้า → กลับร้าน</h2><pre>export function calculateRouteDistance(
+  store: Coordinate,
+  orderedOrders: readonly RoutingOrder[]
+): RouteDistanceResult {
+  const stops = [];
+  let previous = store;
+  let cumulativeDistanceKm = 0;
+
+  for (let index = 0;
+       index &lt; orderedOrders.length;
+       index += 1) {
+    const order = orderedOrders[index];
+    const distanceFromPreviousKm =
+      calculateDistanceKm(previous, order);
+
+    cumulativeDistanceKm += distanceFromPreviousKm;
+
+    stops.push({
+      ...order,
+      sequence: index + 1,
+      distanceFromPreviousKm,
+      cumulativeDistanceKm,
+    });
+
+    previous = order;
+  }
+
+  const returnDistanceKm =
+    orderedOrders.length === 0
+      ? 0
+      : calculateDistanceKm(previous, store);
+
+  return {
+    stops,
+    returnDistanceKm,
+    totalDistanceKm:
+      cumulativeDistanceKm + returnDistanceKm,
+  };
+}</pre><div class="card"><p>ตัวแปร <code>previous</code> ทำให้ระบบคำนวณจากจุดก่อนหน้าไปจุดถัดไป ไม่ได้วัดทุกจุดกลับร้านเสมอ ส่วน <code>returnDistanceKm</code> คำนวณเฉพาะช่วงท้ายกลับร้าน</p></div>
+<h2>9. Route Timing: เวลาออก 11:30 และ Deadline 12:30</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/delivery-routes/planning/route-timing.ts</code></p><pre>export function calculateRouteTiming(
+  route: RouteDistanceResult,
+  departureMinute = 11 * 60 + 30,
+  deadlineMinute = 12 * 60 + 30,
+  speedKmh = 30,
+): RouteTimingResult {
+  const stops = route.stops.map(stop =&gt; {
+    const elapsedMinutes =
+      stop.cumulativeDistanceKm / speedKmh * 60;
+
+    const arrivalMinute =
+      departureMinute + elapsedMinutes;
+
+    const lateMinutes =
+      Math.max(0, arrivalMinute - deadlineMinute);
+
+    return {
+      ...stop,
+      arrivalMinute,
+      lateMinutes,
+      isLate: lateMinutes &gt; 0,
+    };
+  });
+
+  return {
+    stops,
+    totalTravelMinutes:
+      route.totalDistanceKm / speedKmh * 60,
+    lastDeliveryMinute:
+      stops.at(-1)?.arrivalMinute ?? null,
+    returnMinute:
+      departureMinute + route.totalDistanceKm / speedKmh * 60,
+    lateOrderCount:
+      stops.filter(stop =&gt; stop.isLate).length,
+  };
+}</pre><p>11:30 ถูกแทนด้วย 690 นาทีจากเที่ยงคืน และ 12:30 คือ 750 นาที การถึงตรง 750 ยังไม่ถือว่าสาย เพราะตรวจ <code>lateMinutes &gt; 0</code></p>
+<h2>10. Route Cost: สูตรต้นทุนในโค้ดจริง</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/delivery-routes/planning/route-cost.ts</code></p><pre>export const COST_RULES = {
+  pricePerBox: 65,
+  foodCostPerBox: 40,
+  dispatchCostPerTrip: 15,
+  transportCostPerKmPerBox: 2,
+  latePenaltyPerOrder: 20,
+} as const;
+
+const revenue =
+  trip.totalBoxes * COST_RULES.pricePerBox;
+
+const foodCost =
+  trip.totalBoxes * COST_RULES.foodCostPerBox;
+
+const dispatchCost =
+  COST_RULES.dispatchCostPerTrip;
+
+const transportCost =
+  distanceKm *
+  trip.totalBoxes *
+  COST_RULES.transportCostPerKmPerBox;
+
+const estimatedPenalty =
+  trip.timing.lateOrderCount *
+  COST_RULES.latePenaltyPerOrder;
+
+const totalCost =
+  foodCost + dispatchCost +
+  transportCost + estimatedPenalty;
+
+return {
+  revenue,
+  totalCost,
+  profit: revenue - totalCost
+};</pre><p>ค่าระยะทางคูณทั้งระยะทางและจำนวนกล่อง แต่ค่าปรับคูณจำนวนออเดอร์ที่สาย ไม่ใช่จำนวนกล่อง</p>
+<h2>11. Optimizer จำกัด Rider และจำนวนออเดอร์</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/delivery-routes/planning/route-optimizer.ts</code></p><pre>const available = riders
+  .filter(rider =&gt; rider.status === "AVAILABLE")
+  .sort((a, b) =&gt;
+    Math.min(3, b.max_orders_per_route) -
+    Math.min(3, a.max_orders_per_route)
+  );
+
+const caps = available.map(rider =&gt;
+  Math.min(3, rider.max_orders_per_route)
+);</pre><p>แม้ข้อมูล Rider ระบุรับได้ 5 ระบบก็จำกัดตามโจทย์สูงสุด 3 ออเดอร์ต่อรอบ การจัดกลุ่มจึงต้องไม่ส่งรายการเกิน Capacity</p><pre>for (const rider of riders) {
+  if (remaining.length === 0) break;
+  if (rider.status !== "AVAILABLE") continue;
+
+  const maxOrders =
+    Math.min(3, rider.max_orders_per_route);
+
+  // ไรเดอร์เริ่มค้นหาจุดส่งจากร้าน
+  const selected = chooseNearbyOrders(
+    store,
+    remaining,
+    maxOrders
+  );
+}</pre><p>เหตุผลที่เริ่มจากร้านคืออาหารอยู่ที่ร้าน และทุกเที่ยวควรเริ่มจากร้าน ไม่ใช่เริ่มจากตำแหน่ง Rider แบบสุ่ม</p>
+<h2>12. Backend Validate แผนก่อนบันทึก</h2><p class="small">ไฟล์จริง: <code>backend/services/selected-plan.ts</code></p><pre>if (!Array.isArray(trip.orderIds) ||
+    trip.orderIds.length &lt; 1 ||
+    trip.orderIds.length &gt; 3) {
+  invalid(
+    "ไรเดอร์รับได้ไม่เกินคนละ 3 ออเดอร์"
+  );
+}
+
+if (new Set(ids).size !== ids.length ||
+    ids.length !== orders.length ||
+    orders.some(order =&gt;
+      !ids.includes(order.orderId))) {
+  invalid(
+    "มีออเดอร์ซ้ำหรือรายการออเดอร์ไม่ตรงกับแผน"
+  );
+}</pre><div class="card"><p>ส่วนนี้สำคัญมาก เพราะ Frontend อาจถูกแก้ Request จาก DevTools ได้ Backend จึงต้องตรวจจำนวนออเดอร์ ความซ้ำ และความตรงกันของรายการอีกครั้ง</p></div>
+<h2>13. Backend ยืนยันว่าระยะถนนไม่เปลี่ยน</h2><pre>const indices = [
+  0,
+  ...trip.orderIds.map(id =&gt; matrixIndex.get(id)!),
+  0
+];
+
+const legs = indices.slice(1).map(
+  (to, index) =&gt;
+    matrix.distancesKm[
+      indices[index]!
+    ]![to]!
+);
+
+if (legs.some((distance, index) =&gt;
+    Math.abs(
+      distance - trip.roadLegDistancesKm![index]!
+    ) &gt; 1e-6)) {
+  throw new PlanError(
+    409,
+    "ระยะทางถนนเปลี่ยน กรุณาคำนวณใหม่"
+  );
+}</pre><p>เหตุผลคือแผนที่ผู้ใช้เห็นตอนเลือกต้องตรงกับแผนที่ Backend บันทึก ถ้าพิกัดหรือข้อมูลเปลี่ยนระหว่างนั้น ให้คำนวณใหม่แทนการบันทึกตัวเลขเก่า</p>
+<h2>14. Transaction ตอนสร้างใบงาน</h2><p class="small">ไฟล์จริง: <code>backend/services/selected-plan.ts</code></p><pre>const client = await pool.connect();
+
+try {
+  await client.query("BEGIN");
+
+  // ตรวจวัน ร้าน Order และ Rider ล่าสุด
+  // INSERT route_plans
+  // INSERT route_stops
+  // UPDATE orders SET status = 'ASSIGNED'
+
+  await client.query("COMMIT");
+} catch (error) {
+  await client.query("ROLLBACK");
+  throw error;
+} finally {
+  client.release();
+}</pre><p>ถ้า Insert ตารางหนึ่งสำเร็จ แต่อีกตารางล้มเหลว Transaction จะ Rollback ทำให้ไม่เกิดใบงานครึ่งเดียว</p>
+<h2>15. Rider Login: Component จริง</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/rider-login/rider-login.ts</code></p><pre>async ngOnInit(): Promise&lt;void&gt; {
+  const queryCode =
+    this.route.snapshot.queryParamMap
+      .get("worksheetCode")
+      ?.trim()
+      .toUpperCase();
+
+  const currentCode =
+    this.auth.getWorksheetCode();
+
+  if (queryCode) {
+    this.worksheetCode.set(queryCode);
+    await this.executeLogin(queryCode);
+  } else if (currentCode) {
+    void this.router.navigate(["/rider/work"]);
+  }
+}</pre><pre>private async executeLogin(code: string): Promise&lt;void&gt; {
+  this.loading.set(true);
+  try {
+    await this.auth.loginByWorksheet(code);
+    await this.router.navigate(["/rider/work"]);
+  } catch (error) {
+    this.errorMessage.set(
+      "เข้าสู่ระบบไม่สำเร็จ กรุณาตรวจสอบเลขใบงาน"
+    );
+  } finally {
+    this.loading.set(false);
+  }
+}</pre><p>เมื่อ QR เปิด URL พร้อม Query Code ระบบจึงเรียก Login อัตโนมัติ ถ้าเปิดหน้า Login ปกติจะต้องกรอก Code เอง</p>
+<h2>16. Rider Auth API จริง</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/services/api/rider-auth-api.ts</code></p><pre>async loginByWorksheet(
+  worksheetCode: string
+): Promise&lt;RiderLoginResponse&gt; {
+  const response = await lastValueFrom(
+    this.http.post&lt;RiderLoginResponse&gt;(
+      \`\${this.api.API_ENDPOINT}/rider/auth/worksheet\`,
+      { worksheetCode }
+    )
+  );
+
+  const code =
+    response.worksheetCode ||
+    worksheetCode.trim().toUpperCase();
+
+  localStorage.setItem(
+    "rider_worksheet_code",
+    code
+  );
+
+  return response;
+}
+
+private authHeaders(): HttpHeaders {
+  return new HttpHeaders({
+    "x-worksheet-code":
+      this.getWorksheetCode()
+  });
+}</pre><p>POST ครั้งแรกส่ง Code ใน Body แต่ GET ถัดไปส่ง Code ใน Header ดังนั้นถ้า Header ไม่ตรง จะได้ 401 แม้ Login ครั้งแรกจะได้ 200</p>
+<h2>17. Backend ตรวจ Worksheet จริง</h2><p class="small">ไฟล์จริง: <code>backend/middleware/rider-session.ts</code></p><pre>const rawCode =
+  req.header("x-worksheet-code");
+const worksheetCode =
+  typeof rawCode === "string"
+    ? rawCode.trim()
+      .replace(/\s+/g, "")
+      .toUpperCase()
+    : "";
+
+const session =
+  await findValidWorksheet(worksheetCode);
+
+if (!session) {
+  res.status(401).json({
+    message:
+      "เลขใบงานไม่ถูกต้อง หรือไม่มีงานสำหรับวันนี้"
+  });
+  return;
+}
+
+req.riderId = session.riderId;
+req.routePlanId = session.routePlanId;
+req.worksheetCode = session.worksheetCode;
+req.rider = session.rider;
+next();</pre><p>จุดนี้คือเหตุผลที่ระบบรู้ว่าใบงานเป็นของใคร เพราะ Session ถูกสร้างจากการค้นใน Database ไม่ใช่จากค่าที่ Browser บอกว่าเป็น Rider ID ใด</p>
+<h2>18. SQL ที่หา Rider จาก Worksheet</h2><p class="small">ไฟล์จริง: <code>backend/middleware/rider-session.ts</code></p><pre>SELECT
+  route_plan.route_plan_id,
+  route_plan.worksheet_code,
+  rider.rider_id,
+  rider.name,
+  rider.phone,
+  rider.vehicle_plate,
+  rider.status AS rider_status,
+  rider.max_orders_per_route
+FROM route_plans AS route_plan
+INNER JOIN route_stops AS route_stop
+  ON route_stop.route_plan_id =
+     route_plan.route_plan_id
+INNER JOIN riders AS rider
+  ON rider.rider_id = route_stop.rider_id
+WHERE route_plan.worksheet_code = $1
+  AND route_plan.route_date = BUSINESS_DATE
+  AND route_plan.status = "SELECTED"</pre><p>ระบบใช้ JOIN จากใบงานไปจุดส่งแล้วไป Rider ถ้าใบงานไม่มีจุดส่ง หรือวันไม่ตรง ก็ไม่ผ่าน</p>
+<h2>19. Rider Work ดึงข้อมูลอะไร</h2><p class="small">ไฟล์จริง: <code>backend/controller/rider.ts</code></p><pre>SELECT
+  route_plan.route_date::text AS work_date,
+  store.store_name,
+  store.phone AS store_phone,
+  store.latitude AS store_latitude,
+  store.longitude AS store_longitude,
+  route_stop.route_stop_id,
+  route_stop.order_id,
+  route_stop.stop_sequence,
+  CONCAT_WS(
+    ' ',
+    customer.first_name,
+    customer.last_name
+  ) AS customer_name,
+  customer.address,
+  customer.latitude,
+  customer.longitude,
+  order_row.box_quantity,
+  route_stop.delivery_status
+FROM route_stops AS route_stop
+INNER JOIN route_plans AS route_plan
+  ON route_plan.route_plan_id =
+     route_stop.route_plan_id
+INNER JOIN stores AS store
+  ON store.store_id = route_plan.store_id
+INNER JOIN orders AS order_row
+  ON order_row.order_id = route_stop.order_id
+INNER JOIN customers AS customer
+  ON customer.customer_id = order_row.customer_id
+WHERE route_stop.rider_id = $1
+  AND route_plan.route_plan_id = $2
+  AND route_plan.route_date = BUSINESS_DATE
+  AND route_plan.status = "SELECTED"
+ORDER BY route_stop.stop_sequence</pre><p><code>$1</code> และ <code>$2</code> มาจาก Middleware ไม่ใช่จาก Query String ของผู้ใช้ จึงกรองทั้ง Rider และใบงาน</p>
+<h2>20. Rider Work รวมจำนวนกล่อง</h2><pre>const stops = rows.map(row =&gt; ({
+  routeStopId: Number(row.route_stop_id),
+  sequence: row.stop_sequence,
+  orderId: row.order_id,
+  customerName: row.customer_name ?? "",
+  address: row.customer_address ?? "",
+  boxes: Number(row.box_quantity),
+  latitude: Number(row.customer_latitude),
+  longitude: Number(row.customer_longitude),
+  status: row.delivery_status,
+}));
+
+res.status(200).json({
+  work: {
+    workDate: firstRow?.work_date ?? "",
+    totalBoxes: stops.reduce(
+      (total, stop) =&gt; total + stop.boxes, 0
+    ),
+    totalStops: stops.length,
+    deliveredStops: stops.filter(
+      stop =&gt; stop.status === "DELIVERED"
+    ).length,
+    pendingStops: stops.filter(
+      stop =&gt; stop.status !== "DELIVERED"
+    ).length,
+    stops
+  }
+});</pre><p>ข้อมูลที่แสดงบนหน้ามือถือจึงไม่ได้คำนวณจาก Order ทั้งหมด แต่คำนวณจาก Stops ที่ผ่านการกรองแล้วว่าเป็นใบงานของ Rider ปัจจุบัน</p>
+<h2>21. Rider List รู้ได้อย่างไรว่าใครมีงาน</h2><p class="small">ไฟล์จริง: <code>backend/controller/rider.ts</code></p><pre>WITH today_stops AS (
+  SELECT
+    route_stop.rider_id,
+    route_plan.worksheet_code,
+    route_stop.delivery_status,
+    order_row.box_quantity
+  FROM route_stops AS route_stop
+  INNER JOIN route_plans AS route_plan
+    ON route_plan.route_plan_id =
+       route_stop.route_plan_id
+  INNER JOIN orders AS order_row
+    ON order_row.order_id = route_stop.order_id
+  WHERE route_plan.route_date = BUSINESS_DATE
+    AND route_plan.status = "SELECTED"
+)
+SELECT
+  rider.rider_id,
+  rider.name,
+  MAX(today_stops.worksheet_code),
+  COUNT(today_stops.rider_id) AS order_count,
+  SUM(today_stops.box_quantity) AS total_box_count
+FROM riders AS rider
+LEFT JOIN today_stops
+  ON today_stops.rider_id = rider.rider_id
+GROUP BY rider.rider_id, rider.name;</pre><p>ใช้ <code>LEFT JOIN</code> จึงยังเห็น Rider ที่ไม่มีงาน และค่าจำนวนของเขาเป็น 0 แทนที่จะหายจากหน้า</p>
+<h2>22. QR จริงอยู่ตรงไหน</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/riders/riders.ts</code></p><pre>protected qrLoginUrl(rider: Rider): string {
+  const isLocal =
+    window.location.hostname === "localhost";
+
+  const origin = isLocal
+    ? PROD_FRONTEND_URL
+    : window.location.origin;
+
+  const baseUrl =
+    origin + "/rider/login";
+
+  return rider.worksheet_code
+    ? baseUrl +
+      "?worksheetCode=" +
+      encodeURIComponent(rider.worksheet_code)
+    : baseUrl;
+}
+
+protected qrImageUrl(rider: Rider): string {
+  return "https://api.qrserver.com/v1/create-qr-code/"
+    + "?size=240x240&amp;data="
+    + encodeURIComponent(
+      this.qrLoginUrl(rider)
+    );
+}</pre><p>QR ของแต่ละ Rider ต่างกันเพราะ <code>worksheet_code</code> ใน URL ต่างกัน เมื่อสแกนจึงเปิดใบงานที่ตรงกับ Code นั้น</p><p>ในงานจริงควรระวังไม่แสดง Code ลับเกินความจำเป็น และควรให้ Backend ตรวจวัน/สถานะทุกครั้ง</p>
+<h2>23. Rider Work สร้างแผนที่จริง</h2><p class="small">ไฟล์จริง: <code>frontend/src/app/pages/rider-work/rider-work.ts</code></p><pre>const points: L.LatLngExpression[] = [
+  [currentWork.storeLatitude,
+   currentWork.storeLongitude],
+  [stop.latitude, stop.longitude],
+];
+
+this.map = L.map(element, {
+  zoomControl: true
+}).setView(points[0], 15);
+
+L.tileLayer(
+  "https://api.maptiler.com/maps/streets-v4/"
+  + "{z}/{x}/{y}.png?key="
+  + MAPTILER_API_KEY
+).addTo(this.map);
+
+L.circleMarker(points[0])
+  .bindTooltip("ร้านต้นทาง")
+  .addTo(this.map);
+
+L.circleMarker(points[1])
+  .bindTooltip("จุดส่งที่ " + stop.sequence)
+  .addTo(this.map);
+
+this.drawRoadRoute(points, color);</pre><p>Marker ร้านและลูกค้ามาจาก Database ผ่าน API ส่วน Tile มาจาก MapTiler และเส้นถนนมาจาก OSRM ซึ่งเป็นข้อมูลคนละแหล่งแต่ประกอบกันเป็นแผนที่หนึ่งหน้า</p>
+<h2>24. วาดเส้นถนนด้วย OSRM Route API</h2><pre>const coordinates = points.map(point =&gt; {
+  const [lat, lon] = point as [number, number];
+  return lon + "," + lat;
+}).join(";");
+
+fetch(
+  "https://router.project-osrm.org/route/v1/driving/"
+  + coordinates
+  + "?overview=full&amp;geometries=geojson"
+)
+.then(response =&gt; response.json())
+.then(data =&gt; {
+  const routeCoordinates =
+    data.routes?.[0]?.geometry?.coordinates;
+
+  const roadPoints = routeCoordinates.map(
+    ([lon, lat]) =&gt; [lat, lon]
+  );
+
+  this.routeLine =
+    L.polyline(roadPoints, {
+      color,
+      weight: 5,
+      opacity: 0.9
+    }).addTo(this.map);
+});</pre><p>จุดที่ทำให้เส้นตามถนนคือไม่ได้ส่งจุดสองจุดไปวาดตรง ๆ แต่ส่งไปให้ Routing Engine คำนวณชุดพิกัดกลางตามถนน แล้วเอาชุดนั้นไปวาดเป็น Polyline</p>
+<h2>25. เปิด Google Maps จากหน้า Rider</h2><pre>const url = new URL(
+  "https://www.google.com/maps/dir/"
+);
+
+url.searchParams.set("api", "1");
+url.searchParams.set(
+  "destination",
+  stop.latitude + "," + stop.longitude
+);
+url.searchParams.set("origin",
+  currentWork.storeLatitude + "," +
+  currentWork.storeLongitude
+);
+url.searchParams.set("travelmode", "driving");
+
+window.open(
+  url.toString(),
+  "_blank",
+  "noopener,noreferrer"
+);</pre><p>นี่คือการเปิดระบบนำทางภายนอก ไม่ใช่การคำนวณใบงานใหม่ จุดเริ่มต้นและปลายทางถูกส่งด้วยพิกัดจากใบงาน</p>
+<h2>26. เปลี่ยนผลการส่ง</h2><pre>protected async updateStopStatus(
+  stop: RiderWorkStop,
+  status: RiderWorkStop["status"]
+): Promise&lt;void&gt; {
+  if (this.statusUpdating() !== null ||
+      stop.status === status) return;
+
+  this.statusUpdating.set(stop.routeStopId);
+
+  try {
+    await this.workApi.updateStopStatus(
+      this.auth.getWorksheetCode(),
+      stop.routeStopId,
+      status
+    );
+
+    this.work.update(current =&gt; ({
+      ...current,
+      stops: current.stops.map(item =&gt;
+        item.routeStopId === stop.routeStopId
+          ? { ...item, status }
+          : item
+      )
+    }));
+  } finally {
+    this.statusUpdating.set(null);
+  }
+}</pre><p>Frontend ส่ง <code>routeStopId</code> และสถานะ แต่ Backend ต้องตรวจซ้ำว่า Stop นั้นอยู่ใน Worksheet ของ Rider ก่อน Update</p>
+<h2>27. สรุปเส้นทางการเรียก API ทั้งหมด</h2><table><tr><th>ผู้ใช้ทำอะไร</th><th>Frontend เรียก</th><th>Backend ทำอะไร</th><th>ผลลัพธ์</th></tr><tr><td>เปิดหน้าเส้นทาง</td><td>GET planning-store/orders/riders/plans</td><td>อ่านข้อมูลตามวัน</td><td>เตรียม Input</td></tr><tr><td>กดจัดเส้นทาง</td><td>POST road-matrix</td><td>เรียก OSRM/Cache</td><td>Road Matrix</td></tr><tr><td>เลือกและยืนยัน</td><td>POST confirm</td><td>Validate + Transaction</td><td>Route Plan/Stops</td></tr><tr><td>ร้านเปิด QR</td><td>GET riders</td><td>รวมจำนวนงานวันนี้</td><td>Worksheet Code</td></tr><tr><td>Rider สแกน QR</td><td>POST rider/auth/worksheet</td><td>ค้นหาใบงาน valid</td><td>ข้อมูล Rider</td></tr><tr><td>เปิดหน้า Work</td><td>GET me + GET work</td><td>อ่านจาก Header และ JOIN</td><td>ใบงานเฉพาะ Rider</td></tr><tr><td>กดส่งสำเร็จ</td><td>PATCH route-stops/:id/status</td><td>ตรวจสิทธิ์/เปลี่ยน Order</td><td>สถานะ DELIVERED</td></tr></table>
+<h2>28. วิธีเปิดดูหลักฐานในไฟล์จริง</h2><div class="card"><ol><li>เปิด <code>app.routes.ts</code> เพื่อชี้ว่าหน้าอยู่ URL ไหน</li><li>เปิด Component TypeScript เพื่อชี้ฟังก์ชันเริ่มต้น</li><li>เปิด Service เพื่อชี้ URL และ HTTP Method</li><li>เปิด Controller เพื่อชี้การรับ Request และ Response</li><li>เปิด SQL/Service เพื่อชี้ JOIN, WHERE, Transaction</li><li>เปิด HTML เพื่อชี้จุดที่นำข้อมูลไปแสดง</li></ol><p>เวลาตอบควรพูดให้ครบว่า “ข้อมูลเข้าไฟล์นี้จากไหน → ฟังก์ชันนี้ตรวจอะไร → ส่งต่อไปไหน → ผลลัพธ์แสดงที่หน้าใด”</p></div>
+<h2>29. ประโยคตอบอาจารย์จากโค้ดจริง</h2><div class="lead"><p>“ในหน้า Delivery Routes ผมเริ่มจาก <code>app.routes.ts</code> ให้ Angular โหลด Component จากนั้น Component เรียก Service เพื่อโหลดร้าน ออเดอร์ Rider และแผนเดิม เมื่อกดคำนวณจะส่งพิกัดไป Endpoint <code>/route-plans/road-matrix</code> Backend เรียก OSRM Table API เพื่อสร้าง Matrix ระยะทางถนน แล้วส่งกลับให้ <code>optimizeDeliveryRoutes</code> แบ่งกลุ่มตาม Rider ที่ AVAILABLE และความจุไม่เกิน 3 ออเดอร์ จากนั้นคำนวณเวลาและต้นทุนด้วยฟังก์ชันในไฟล์ planning เมื่อกดยืนยันจะส่ง Plan ที่เลือกไป <code>/route-plans/confirm</code> Backend Validate ข้อมูลกับ Database ปัจจุบันและบันทึกด้วย Transaction เป็น Route Plan กับ Route Stops”</p></div>
+</main><footer>หน้านี้แสดงเฉพาะโค้ดจากไฟล์จริงที่ไม่เปิดเผย Secret หากต้องการดูทฤษฎีให้กลับไป <a href="database.html">Database/UML/DFD</a></footer></body></html>

@@ -1,0 +1,43 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>อ่านโค้ดระบบ Rider</title><link rel="stylesheet" href="styles.css"></head><body>
+<nav><strong>Rider Study Guide</strong><a href="index.html">ภาพรวม</a><a href="code.html">อ่านโค้ด</a><a href="calculation.html">การคำนวณ</a><a href="database.html">Database/UML/DFD</a><a href="exam-qa.html">คำถามอาจารย์</a></nav><main>
+<section class="lead"><span class="tag">หน้า 1: อ่านโค้ด</span><h1>อ่านระบบจาก Route ไปถึง Database</h1><p>เวลาต้องอธิบายโค้ด อย่าเริ่มอ่านแบบสุ่ม ให้เดินตามเส้นทางของข้อมูล: URL → Component → Service → Backend Controller → SQL → Response → หน้าจอ</p></section>
+<h2>1. จุดเริ่มของ Frontend</h2><div class="card"><p>ไฟล์ <code>frontend/src/app/app.routes.ts</code> บอกว่า URL แต่ละอันใช้หน้าใด เช่น <code>/orders</code>, <code>/delivery-routes</code>, <code>/rider/login</code> และ <code>/rider/work</code></p><pre>ผู้ใช้เปิด /delivery-routes
+        ↓
+app.routes.ts เลือก DeliveryRoutesComponent
+        ↓
+delivery-routes.ts โหลดข้อมูลผ่าน Service
+        ↓
+route-api.ts เรียก HTTP API</pre><p>ถ้าอาจารย์ถามว่า “รู้ได้อย่างไรว่าหน้านี้ทำงานที่ไหน” ให้ตอบว่าเริ่มจาก Route แล้วตาม Component ที่ Route ลงทะเบียนไว้</p></div>
+<h2>2. Component Angular ทำอะไร</h2><table><tr><th>ส่วนใน Component</th><th>หน้าที่</th><th>ตัวอย่างในโปรเจกต์</th></tr><tr><td>imports</td><td>นำ Component, Service, Forms และ Router มาใช้</td><td>หน้า Customers/Orders/Delivery Routes</td></tr><tr><td>state</td><td>เก็บรายการข้อมูล loading error และข้อมูลที่เลือก</td><td>orders, riders, selectedPlan</td></tr><tr><td>ngOnInit</td><td>เริ่มโหลดข้อมูลเมื่อเปิดหน้า</td><td>โหลดร้าน ลูกค้า ออเดอร์ Rider</td></tr><tr><td>method</td><td>ตอบสนองการกดปุ่ม</td><td>simulate, calculate, confirm, cancel</td></tr><tr><td>template</td><td>แสดง state เป็น HTML</td><td><code>@if</code>, <code>@for</code>, event binding</td></tr></table>
+<h2>3. หน้า Orders ทำงานอย่างไร</h2><div class="card"><ol><li>Component เรียก API โหลดออเดอร์ของวันธุรกิจ</li><li>Backend JOIN ข้อมูลลูกค้าเพื่อส่งชื่อ เบอร์ ที่อยู่ และพิกัดกลับมา</li><li>หน้าเว็บแสดงจำนวนกล่องและสถานะ</li><li>ถ้ากดจำลอง Backend สร้างข้อมูลตัวอย่างตามเงื่อนไขธุรกิจ</li><li>การแก้/ลบต้องตรวจว่า Order ยังอยู่สถานะที่อนุญาตหรือไม่</li></ol><p>จุดสำคัญคือออเดอร์ที่มีการจัดเส้นทางแล้วไม่ควรถูกลบแบบเงียบ ๆ เพราะอาจมี <code>route_stops</code> อ้างถึงอยู่</p></div>
+<h2>4. หน้า Delivery Routes ทำงานอย่างไร</h2><div class="card"><pre>load planning store
+load today's orders
+load available riders
+load saved route plans
+        ↓
+build coordinates
+        ↓
+request road matrix from OSRM
+        ↓
+optimize assignments
+        ↓
+calculate cost/time/profit
+        ↓
+show alternatives on map
+        ↓
+confirm selected plan</pre><p>หน้าจอเป็นเพียงผู้ช่วยตัดสินใจ การบันทึกจริงต้องเกิดใน Backend ตอน Confirm เพื่อป้องกันข้อมูลถูกแก้จากหน้าจอโดยตรง</p></div>
+<h2>5. Backend และการแบ่งไฟล์</h2><table><tr><th>ไฟล์</th><th>อธิบาย</th></tr><tr><td><code>backend/server.ts</code></td><td>สร้างและเริ่ม Express Server บน Port</td></tr><tr><td><code>backend/app.ts</code></td><td>ตั้ง Middleware, CORS และ Mount Route</td></tr><tr><td><code>backend/controller/order.ts</code></td><td>รับ Request เกี่ยวกับ Order ตรวจสถานะและเรียก SQL</td></tr><tr><td><code>backend/controller/route-plan.ts</code></td><td>อ่าน/สร้าง/ยืนยัน/ยกเลิกแผนเส้นทาง</td></tr><tr><td><code>backend/controller/route-stop.ts</code></td><td>อ่านจุดส่งและอัปเดตผลการส่ง</td></tr><tr><td><code>backend/services/road-matrix.ts</code></td><td>เรียก OSRM และเก็บ Cache ระยะทาง</td></tr><tr><td><code>backend/database/rider_project_seed_v2.sql</code></td><td>สร้างตาราง Constraint และข้อมูลตัวอย่าง</td></tr></table>
+<h2>6. Rider Login และ Rider Work</h2><div class="card"><pre>Rider กรอก Worksheet Code
+        ↓
+POST /rider/auth/worksheet
+        ↓
+Backend ตรวจ code + วัน + สถานะใบงาน
+        ↓
+Frontend เก็บ code ไว้สำหรับ Request ถัดไป
+        ↓
+GET /rider/auth/me และ GET /rider/work
+        ↓
+Backend ใช้ x-worksheet-code หา rider และ route plan</pre><p>เหตุผลที่ Backend ต้องเป็นผู้หา Rider คือไม่ควรเชื่อ <code>rider_id</code> ที่ผู้ใช้ส่งเอง เพราะผู้ใช้อาจเปลี่ยนเลขแล้วเห็นงานคนอื่นได้</p></div>
+<h2>7. วิธีตาม Request หนึ่งรายการ</h2><div class="card"><p>ถ้าหน้าจอขึ้น “โหลดข้อมูลไม่ได้” ให้เปิด DevTools → Network แล้วดู Request ตามลำดับ:</p><ol><li>URL ถูก Origin หรือไม่</li><li>Method ถูกหรือไม่ เช่น GET/POST/PATCH</li><li>Status เป็น 200, 400, 403, 404, 500 หรือ CORS</li><li>Request Header มี <code>x-worksheet-code</code> หรือไม่</li><li>Response มี JSON message อะไร</li><li>เปิด Backend terminal ดู SQL error เพิ่มเติม</li></ol></div>
+<h2>8. คำตอบสั้นสำหรับอธิบายโค้ด</h2><div class="answer"><p>“Frontend รับหน้าที่แสดงผลและส่ง Request ผ่าน Service ส่วน Backend รับผิดชอบ Validation, Business Rule และ SQL เพราะต้องควบคุมความถูกต้องและความปลอดภัย การคำนวณเส้นทางแยกเป็นส่วนวางแผนเพื่อทดสอบหลายทางเลือกได้ และตอนยืนยันจึงบันทึกข้อมูลจริงเป็น Route Plan กับ Route Stop”</p></div>
+</main><footer>อ่านต่อ: <a href="calculation.html">การคำนวณเส้นทาง</a></footer></body></html>

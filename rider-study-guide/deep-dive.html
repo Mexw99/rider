@@ -1,0 +1,324 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>เจาะลึกโค้ดระบบ Rider</title><link rel="stylesheet" href="styles.css"></head><body>
+<nav><strong>Rider Study Guide</strong><a href="index.html">ภาพรวม</a><a href="code.html">อ่านโค้ด</a><a href="calculation.html">การคำนวณ</a><a href="database.html">Database/UML/DFD</a><a href="exam-qa.html">คำถามอาจารย์</a><a href="deep-dive.html">เจาะลึกโค้ด</a></nav><main>
+<section class="lead"><span class="tag">หน้าเจาะลึกพิเศษ</span><h1>โค้ดทำงานจริงอย่างไร ตั้งแต่กดปุ่มจนข้อมูลขึ้นจอ</h1><p>หน้านี้ตอบคำถามแบบลงรายละเอียดว่าแต่ละฟังก์ชันทำอะไร รับค่าอะไร ส่งค่าอะไร และทำไมข้อมูลจึงไหลไปถึงหน้าถัดไปได้</p></section>
+<h2>1. เส้นทางข้อมูลทั้งระบบ</h2><div class="card"><pre>Browser / Angular
+  └─ Component เช่น delivery-routes.ts
+      └─ API Service เช่น route-api.ts
+          └─ HTTP Request เช่น POST /route-plans/road-matrix
+              └─ Express Router ใน backend/app.ts
+                  └─ Controller ใน backend/controller/route-plan.ts
+                      └─ Service หรือ SQL
+                          └─ PostgreSQL บน Neon
+                              └─ JSON Response กลับไปยัง Angular
+                                  └─ signal/state เปลี่ยน
+                                      └─ HTML แสดงผลใหม่</pre><p>การไหลแบบนี้เรียกว่า Separation of Concerns แต่ละชั้นมีหน้าที่ชัดเจน จึงแก้หรือทดสอบได้ง่ายกว่าการเขียนทุกอย่างไว้ใน Component เดียว</p></div>
+<h2>2. ตอนเปิดหน้า Delivery Routes เกิดอะไรขึ้น</h2><div class="card"><p>จุดเริ่มอยู่ที่ <code>frontend/src/app/pages/delivery-routes/delivery-routes.ts</code> โดย Component จะโหลดข้อมูลที่จำเป็น เช่นร้าน ออเดอร์ Rider และแผนเดิม แล้วเก็บไว้ใน state</p><pre>await Promise.all([
+  loadPlanningStore(),
+  loadOrders(),
+  loadRiders(),
+  loadSavedPlans()
+]);</pre><p>แนวคิดของ <code>Promise.all</code> คือข้อมูลที่ไม่ต้องรอกันสามารถโหลดพร้อมกันได้ ลดเวลารอ เมื่อทุก Request สำเร็จจึงนำข้อมูลมาสร้าง Input ให้ตัวคำนวณ</p><p>ถ้าขึ้น “โหลดข้อมูลไม่ได้” ให้แยกว่า Error เกิดที่ Request ไหน ไม่ใช่สรุปทันทีว่า Map หรือ Algorithm เสีย</p></div>
+<h2>3. ตอนกด “จัดเส้นทาง”</h2><div class="card"><ol><li>เลือกเฉพาะ Order ของวันปัจจุบันและสถานะที่จัดได้</li><li>สร้างรายการพิกัด โดยจุดแรกเป็นร้าน และจุดต่อไปเป็นลูกค้า</li><li>เรียก <code>POST /route-plans/road-matrix</code> พร้อม JSON <code>{ points: [...] }</code></li><li>Backend ใน <code>route-plan.ts</code> เรียก <code>getRoadDistanceMatrix()</code></li><li>Service ใน <code>road-matrix.ts</code> ส่งพิกัดไป OSRM Table API</li><li>ได้ Matrix ที่ตำแหน่งแถว/คอลัมน์แทนจุด และค่าภายในคือระยะทางถนน</li><li>Frontend ส่ง Matrix ไป <code>optimizeDeliveryRoutes()</code></li><li>ตัว Optimizer สร้างตัวเลือกหลายแบบ แล้วคำนวณ Score</li><li>ผลถูกเก็บใน state เพื่อแสดงการ์ด Rider แผนที่ และตัวเลขสรุป</li></ol></div>
+<h2>4. Road Matrix คืออะไร</h2><div class="card"><pre>points = [
+  { latitude: ร้าน, longitude: ร้าน },
+  { latitude: ลูกค้า A, longitude: ลูกค้า A },
+  { latitude: ลูกค้า B, longitude: ลูกค้า B }
+]
+
+distancesKm[0][1] = ร้าน → ลูกค้า A
+distancesKm[1][2] = ลูกค้า A → ลูกค้า B
+distancesKm[2][0] = ลูกค้า B → ร้าน</pre><p>Matrix เป็นการเตรียมค่าระยะทางระหว่างทุกคู่ไว้ก่อน ทำให้ Algorithm อ่านค่าได้เร็วโดยไม่ต้องเรียก OSRM ทุกครั้งที่ลองสลับจุด</p><p>ในโค้ดมีการเก็บ Cache โดยใช้ชุดพิกัดเป็น Key และมีอายุประมาณหนึ่งชั่วโมง เพื่อไม่ให้การคำนวณซ้ำสร้างภาระให้บริการ OSRM</p></div>
+<h2>5. จุดที่จัดกลุ่ม Rider อยู่ตรงไหน</h2><div class="card"><p>การจัดกลุ่มเริ่มจาก <code>frontend/src/app/pages/delivery-routes/planning/route-optimizer.ts</code> และใช้โค้ดพื้นฐานจาก <code>route-assignment.ts</code></p><pre>const available = riders.filter(
+  rider =&gt; rider.status === 'AVAILABLE'
+);
+const caps = available.map(
+  rider =&gt; Math.min(3, rider.max_orders_per_route)
+); </pre><p>บรรทัดแรกตัด Rider ที่ไม่พร้อมออก บรรทัดที่สองจำกัดความจุไม่ให้เกิน 3 แม้ฐานข้อมูลจะเก็บค่ามากกว่านั้น</p><p>หลังจากนั้น Optimizer ตรวจว่ากลุ่มใดไม่เกินความจุ แล้วประเมินระยะทางขาไป เวลา และต้นทุน ก่อนเลือก Allocation ที่เหมาะกว่า</p></div>
+<h2>6. วิธีเลือกผลที่ดีที่สุด</h2><div class="card"><pre>compare(a, b):
+  1. เลือกแผนที่จัด Order ได้มากกว่า
+  2. ถ้าจัดได้เท่ากัน เลือกแผนที่มีงานล่าช้าน้อยกว่า
+  3. ถ้าเท่ากัน เลือกต้นทุนขาออกต่ำกว่า
+  4. ถ้าเท่ากัน เลือกเวลารวมต่ำกว่า
+  5. ถ้าเท่ากัน เลือกระยะทางต่ำกว่า</pre><p>เหตุผลที่ต้องมีลำดับความสำคัญคือ “ระยะทางสั้นที่สุด” อย่างเดียวอาจทำให้บางออเดอร์ไม่ได้รับการจัด หรือไปถึงช้า ระบบจึงต้องให้ความสำคัญกับการจัดงานครบและส่งทันก่อน</p></div>
+<h2>7. ระยะทางขาไปกับระยะทางกลับร้าน</h2><div class="card"><p>ในหน้าเลือกเส้นทาง ระบบอาจใช้ระยะทางขาออกเพื่อเปรียบเทียบว่าร้านไปส่งครบเร็วแค่ไหน แต่ตอนคำนวณต้นทุนใบงานต้องรวมเส้นทางกลับร้านด้วย</p><pre>ร้าน → จุด 1 → จุด 2 → จุด 3 → ร้าน
+
+totalDistance = outboundDistance + returnDistance</pre><p>นี่คือเหตุผลที่ตัวเลขบนหน้าต่างเลือกแผนอาจต่างจากตัวเลขในใบงานที่บันทึกแล้วได้ หากส่วนหนึ่งใช้เพื่อจัดลำดับและอีกส่วนใช้บัญชีต้นทุน ต้องอ่านชื่อฟังก์ชันและตัวเลือก <code>includeReturnDistance</code> ประกอบ</p></div>
+<h2>8. สูตรคำนวณในไฟล์ planning</h2><table><tr><th>ไฟล์</th><th>ฟังก์ชัน/หน้าที่</th><th>ผลลัพธ์</th></tr><tr><td><code>route-distance.ts</code></td><td>คำนวณระยะทาง Haversine และรวมช่วงร้าน/จุดส่ง/กลับร้าน</td><td>stops, distanceFromPrevious, totalDistanceKm</td></tr><tr><td><code>route-timing.ts</code></td><td>คำนวณเวลาถึงจากระยะทาง ความเร็ว เวลาออก และ Deadline</td><td>arrival, lateOrderCount, totalMinutes</td></tr><tr><td><code>route-cost.ts</code></td><td>คำนวณรายรับ ต้นทุน ค่ารอบ ค่าเดินทาง และกำไร</td><td>totalRevenue, totalCost, totalProfit</td></tr><tr><td><code>route-assignment.ts</code></td><td>สร้างกลุ่มเริ่มต้นตาม Rider และความจุ</td><td>trips/assignments</td></tr><tr><td><code>route-optimizer.ts</code></td><td>ลองหลาย Allocation และจัดลำดับจุดที่เหมาะสม</td><td>RoutePlanAlternative[]</td></tr></table>
+<h2>9. ตอนกดบันทึก/ยืนยันใบงาน</h2><div class="card"><p>ปุ่มยืนยันไม่ได้ส่งแค่ชื่อ Rider แต่ส่งแผนที่เลือกทั้งชุดกลับ Backend ผ่าน <code>POST /route-plans/confirm</code> ซึ่งเป็น Alias เดียวกับ <code>/generate</code></p><p>Payload แนวคิดคือ:</p><pre>{
+  storeId,
+  routeDate,
+  trips: [
+    {
+      riderId,
+      totalBoxes,
+      stops: [
+        { orderId, sequence, distanceFromPreviousKm }
+      ],
+      totalDistanceKm,
+      estimatedMinutes,
+      totalCost,
+      totalRevenue,
+      totalProfit,
+      worksheetCode
+    }
+  ]
+}</pre><p>Backend ใน <code>selected-plan.ts</code> ตรวจข้อมูลอีกครั้ง แล้วใช้ Database Transaction สร้าง <code>route_plans</code>, สร้าง <code>route_stops</code>, เปลี่ยน <code>orders.status</code> เป็น <code>ASSIGNED</code> และ Commit พร้อมกัน</p><p>ถ้าขั้นตอนใดล้มเหลว ระบบควร Rollback เพื่อไม่ให้เกิดกรณีมีใบงานแต่ไม่มีจุดส่ง หรือ Order ถูก ASSIGNED แต่ไม่มีใบงาน</p></div>
+<h2>10. Worksheet Code และ QR ทำงานอย่างไร</h2><div class="card"><p>Worksheet Code ถูกสร้างหรือเก็บอยู่กับใบงานใน <code>route_plans.worksheet_code</code> จากนั้นหน้า Riders สร้าง URL Login เช่น:</p><pre>https://frontend.example/rider/login
+  ?worksheetCode=WORK-R01-DEMO</pre><p>ในไฟล์ <code>frontend/src/app/pages/riders/riders.ts</code> ฟังก์ชัน <code>qrLoginUrl()</code> สร้าง URL และ <code>qrImageUrl()</code> ส่ง URL ไปยัง QR Image API เพื่อสร้างรูป QR</p><pre>return 'https://api.qrserver.com/v1/create-qr-code/'
+  + '?size=240x240&amp;data='
+  + encodeURIComponent(loginUrl);</pre><p>QR ไม่ได้เปิดงานด้วยเวทมนตร์ แต่เก็บ URL ไว้ เมื่อกล้องอ่าน QR จะเปิด URL เดิม ทำให้ Browser เข้าหน้า Login พร้อม Query Parameter</p><p>เหตุผลที่เปิดใบงานต่อได้เองอยู่ที่ <code>rider-login.ts</code> อ่าน <code>worksheetCode</code> จาก Query Param แล้วเรียก <code>executeLogin()</code> อัตโนมัติ</p></div>
+<h2>11. Login ส่งค่าอะไร</h2><div class="card"><pre>rider-login.ts
+  queryCode = ActivatedRoute.queryParamMap.get('worksheetCode')
+  executeLogin(queryCode)
+
+rider-auth-api.ts
+  POST /rider/auth/worksheet
+  body: { worksheetCode }
+
+response:
+  { worksheetCode, rider }</pre><p>Service เก็บ Code ไว้ใน <code>localStorage</code> ด้วย Key <code>rider_worksheet_code</code> จากนั้นหน้า Work ใช้ Code นี้ทำ Header:</p><pre>x-worksheet-code: WORK-R01-DEMO</pre><p>จุดสำคัญคือ Backend ไม่รับ <code>rider_id</code> จากหน้าจอเพื่อเชื่อใจทันที แต่ใช้ Code ไปค้นหาใบงานที่ valid ของวันนั้น แล้วได้ <code>riderId</code> และ <code>routePlanId</code> จากฐานข้อมูล</p></div>
+<h2>12. Backend รู้ได้อย่างไรว่าใบงานเป็นของ Rider คนไหน</h2><div class="card"><p>Middleware <code>backend/middleware/rider-session.ts</code> รับ Header แล้วค้นหาโดย JOIN ตาราง:</p><pre>route_plans.worksheet_code
+  → route_plans.route_plan_id
+  → route_stops.route_plan_id
+  → route_stops.rider_id
+  → riders.rider_id</pre><p>นอกจาก Code ต้องตรง ยังตรวจวันทำงานและสถานะใบงานเป็น <code>SELECTED</code> ด้วย ถ้าไม่ผ่านจะตอบ 401/403 และหน้า Work ไม่ควรแสดงข้อมูล</p></div>
+<h2>13. หน้า Rider Work ดึงข้อมูลอะไร</h2><div class="card"><p>ไฟล์ <code>backend/controller/rider.ts</code> Endpoint <code>GET /rider/work</code> ใช้ข้อมูลจาก route stop, route plan, store, order และ customer แล้วรวมเป็น JSON งานหนึ่งชุด:</p><pre>work: {
+  workDate,
+  totalBoxes,
+  totalStops,
+  deliveredStops,
+  pendingStops,
+  storeName,
+  storePhone,
+  storeLatitude,
+  storeLongitude,
+  stops: [
+    {
+      routeStopId,
+      sequence,
+      orderId,
+      customerName,
+      address,
+      boxes,
+      latitude,
+      longitude,
+      status
+    }
+  ]
+}</pre><p>หน้า <code>rider-work.ts</code> เรียก <code>getMe()</code> และ <code>getWork()</code> พร้อมกันด้วย <code>Promise.all</code> แล้วแสดงชื่อ Rider จากข้อมูล <code>me</code> และแสดงจุดส่งจาก <code>work</code></p></div>
+<h2>14. หน้า Rider เช็คว่ามีออเดอร์หรือยังอย่างไร</h2><div class="card"><p>หน้า Riders เรียก <code>GET /rider</code> Backend ใช้ <code>LEFT JOIN</code> กับจุดส่งของวันนี้ ทำให้ Rider ที่ไม่มีงานยังปรากฏได้ แต่จำนวนงานเป็น 0</p><pre>COUNT(today_stops.rider_id) AS order_count
+SUM(today_stops.box_quantity) AS total_box_count
+FILTER (WHERE delivery_status = 'DELIVERED')
+FILTER (WHERE delivery_status = 'PENDING')</pre><p>จึงแสดงแยกได้ว่า Rider คนนี้มีงานวันนี้หรือยัง ส่งไปกี่ออเดอร์ เหลือกี่ออเดอร์ และมีกี่กล่อง</p></div>
+<h2>15. แผนที่ในเว็บสร้างอย่างไร</h2><div class="card"><p>แผนที่ใช้ Leaflet เป็นตัวควบคุมแผนที่และใช้ MapTiler เป็นแหล่ง Tile ภาพแผนที่ ขั้นตอนทั่วไปคือ:</p><ol><li>สร้าง <code>L.map(element)</code> ผูกกับ div</li><li>สร้าง Tile Layer โดยใช้ URL ของ MapTiler และ API Key จาก Environment</li><li>เพิ่ม Marker จาก latitude/longitude ของร้านและลูกค้า</li><li>เรียก OSRM Route API เพื่อขอพิกัดแนวถนน</li><li>สร้าง <code>L.polyline(geometry)</code> แล้วเพิ่มลงแผนที่</li><li>เรียก <code>fitBounds</code> ให้แผนที่ครอบคลุมจุดทั้งหมด</li></ol><p>MapTiler ทำให้เห็นพื้นหลังแผนที่ ส่วน OSRM ทำให้เส้นทางเป็นถนนจริง ทั้งสองอย่างเป็นคนละหน้าที่กัน</p></div>
+<h2>16. ทำไมเส้นทางถึงตรงตามถนนจริง</h2><div class="card"><p>ถ้าเอาพิกัดร้านกับลูกค้ามาต่อกันตรง ๆ จะเป็นเส้นตรงและไม่ใช่เส้นทางรถ แต่ระบบส่งพิกัดไป OSRM ซึ่งอ้างอิงข้อมูลถนนจาก OpenStreetMap และคืนชุดพิกัดตามแนวถนน เช่น:</p><pre>OSRM response
+  routes[0].geometry.coordinates
+        ↓
+  convert [longitude, latitude]
+        ↓
+  Leaflet expects [latitude, longitude]
+        ↓
+  L.polyline(roadPoints)</pre><p>ความแม่นยำขึ้นกับคุณภาพข้อมูลถนน พิกัดลูกค้า และบริการ Routing ไม่ใช่แค่ความสวยของแผนที่ ถ้าพิกัดผิด เส้นทางก็ผิดตาม</p></div>
+<h2>17. ปุ่มเปิด Google Maps ทำอะไร</h2><div class="card"><p>หน้า Rider สร้าง URL ไป Google Maps Directions API ด้วยพิกัดปลายทาง เช่น <code>https://www.google.com/maps/dir/?api=1&amp;destination=lat,long</code> การกดปุ่มไม่ได้คำนวณเส้นทางใน Backend แต่ส่งต่อให้ Google Maps นำทางจากตำแหน่งปัจจุบันของมือถือ</p></div>
+<h2>18. PostgreSQL คืออะไร</h2><div class="card"><p>PostgreSQL คือระบบจัดการฐานข้อมูลเชิงสัมพันธ์แบบ Open Source ใช้ SQL และมีความสามารถด้าน Constraint, Foreign Key, Transaction, Index, JOIN และชนิดข้อมูลที่เหมาะกับงานจริง</p><p>ระบบนี้เหมาะกับ PostgreSQL เพราะข้อมูลมีความสัมพันธ์ชัดเจน เช่น Order ต้องอ้าง Customer, Route Stop ต้องอ้าง Order/Rider/Route Plan และการยืนยันใบงานต้องเปลี่ยนหลายตารางพร้อมกันอย่างปลอดภัย</p><p><strong>Transaction สำคัญ:</strong> ถ้าบันทึกใบงานสำเร็จแต่เปลี่ยน Order ไม่สำเร็จ ข้อมูลจะขัดแย้งกัน PostgreSQL สามารถ Commit ทั้งชุดหรือ Rollback ทั้งชุดได้</p></div>
+<h2>19. Neon คืออะไร และต่างจาก Supabase อย่างไร</h2><table><tr><th>หัวข้อ</th><th>Neon</th><th>Supabase</th></tr><tr><td>พื้นฐาน</td><td>บริการ PostgreSQL แบบ Cloud/Serverless</td><td>แพลตฟอร์ม Backend-as-a-Service ที่มี PostgreSQL เป็นแกน</td></tr><tr><td>จุดเด่น</td><td>แยก Compute/Storage, Branching Database, เหมาะกับ Connection String PostgreSQL</td><td>มี Auth, Storage, Realtime, API และ Dashboard มาให้</td></tr><tr><td>สิ่งที่โปรเจกต์ใช้</td><td>ใช้เป็น PostgreSQL แล้ว Backend ต่อด้วย <code>pg</code></td><td>ไม่ได้ใช้ Supabase SDK เป็นหลัก</td></tr><tr><td>เหตุผลที่เลือก</td><td>ทีมมี Schema และ SQL อยู่แล้ว ต้องการฐานข้อมูล PostgreSQL ตรง ๆ</td><td>เหมาะเมื่ออยากใช้ระบบ Login/Storage/Realtime ที่มีให้ในตัว</td></tr></table><p>Neon ไม่ใช่ฐานข้อมูลคนละประเภทกับ PostgreSQL แต่เป็นผู้ให้บริการ PostgreSQL บน Cloud ส่วน Supabase ก็ใช้ PostgreSQL เช่นกัน แต่เพิ่มบริการรอบข้างมาให้มากกว่า</p>
+<h2>20. Deploy Frontend และ Backend</h2><div class="card"><h3>Frontend</h3><ol><li>เชื่อม Git Repository หรือเลือกโฟลเดอร์ที่มี Angular</li><li>ตั้ง Root Directory เป็น <code>frontend</code> ถ้า Repository มี frontend/backend อยู่ด้วยกัน</li><li>Build Command ใช้คำสั่งจาก <code>frontend/package.json</code> เช่น <code>npm run build</code></li><li>Output Directory ต้องตรงกับ Angular ที่ Build จริง เช่น <code>dist/frontend</code> ไม่ใช่ <code>public</code> โดยต้องตรวจชื่อจริงใน Build Log</li><li>เพิ่ม <code>MAPTILER_API_KEY</code> ใน Environment ของ Frontend โดยไม่ใส่ลง Source Code</li><li>ตั้ง API Endpoint ให้ชี้ไป Backend URL</li></ol><h3>Backend</h3><ol><li>ตั้ง Root Directory เป็น <code>backend</code></li><li>ตั้ง Build/Install ตาม <code>backend/package.json</code></li><li>เพิ่ม <code>DATABASE_URL</code> ใน Vercel Environment ของ Backend</li><li>เพิ่ม Secret ที่ Backend ต้องใช้ถ้ามี</li><li>เพิ่ม Frontend Production Domain ใน CORS ของ Backend</li><li>Deploy แล้วทดสอบ Endpoint จริง เช่น <code>/route-plans</code></li></ol><p>Production, Preview และ Development เป็น Environment คนละชุด ค่า Environment Variable ต้องเพิ่มให้ถูกชุด ไม่เช่นนั้น Local ใช้ได้แต่ Production ใช้ไม่ได้</p></div>
+<h2>21. สรุปแบบตอบลึก</h2><div class="lead"><p>“เมื่อร้านกดจัดเส้นทาง Angular จะโหลดออเดอร์ของวัน ร้าน และ Rider จาก Backend จากนั้นส่งพิกัดไปขอ Road Matrix จาก OSRM เพื่อได้ระยะทางตามถนนจริง แล้ว Optimizer ทดลองจัดกลุ่มภายใต้ความจุไม่เกิน 3 ออเดอร์ต่อ Rider และประเมินด้วยจำนวนงานที่จัดได้ ความล่าช้า เวลา ระยะทาง และต้นทุน เมื่อร้านยืนยัน Frontend ส่งแผนที่เลือกไป Backend ซึ่งใช้ Transaction บันทึก Route Plan, Route Stop และเปลี่ยน Order เป็น Assigned จากนั้นหน้า Riders อ่าน Worksheet Code มาสร้าง URL QR เมื่อ Rider สแกน Browser เปิดหน้า Login พร้อม Query Parameter หน้า Login ส่ง Code ไปตรวจ Backend และเก็บ Code ไว้ใน Local Storage ทุก Request ถัดไปส่ง Header x-worksheet-code Middleware ใช้ Code JOIN กลับไปหา Rider และ Route Plan จึงรู้ว่าใบงานเป็นของใคร หน้า Work จึงดึงเฉพาะจุดส่งของใบงานนั้นและวาดแผนที่ด้วย Leaflet/MapTiler โดยใช้ Geometry จาก OSRM”</p></div>
+<h2>22. ตัวอย่างโค้ด Endpoint ขอ Road Matrix</h2>
+<div class="card"><pre>routePlanRouter.post("/road-matrix", async (req, res) =&gt; {
+  try {
+    const points = parseRoadPoints(req.body?.points);
+    res.json(await getRoadDistanceMatrix(points));
+  } catch (error) {
+    if (error instanceof RoadMatrixError) {
+      res.status(error.status).json({ message: error.message });
+      return;
+    }
+    res.status(503).json({
+      message: "โหลดระยะทางถนนไม่สำเร็จ กรุณาลองใหม่"
+    });
+  }
+});</pre><p><strong>อธิบาย:</strong> Router รับ Request ที่มี <code>points</code> จาก Frontend ก่อนเรียก <code>parseRoadPoints</code> เพื่อตรวจว่าเป็นพิกัดที่ถูกต้องและมีจำนวนอยู่ในขอบเขต จากนั้นส่งไป <code>getRoadDistanceMatrix</code> ถ้าข้อมูลไม่ถูกต้องเป็น Error 400 แต่ถ้าบริการ OSRM ล้มเหลวเป็น 503</p><p>การแยก Error แบบนี้ช่วยให้ Frontend แสดงข้อความได้ตรงปัญหา ไม่ใช่ใช้คำว่า “คำนวณไม่ได้” กับทุกกรณี</p></div>
+<h2>23. ตัวอย่างโค้ดคำนวณเวลาจริงในหน้าเส้นทาง</h2>
+<div class="card"><pre>const elapsedMinutes =
+  stop.cumulativeDistanceKm / speedKmh * 60;
+
+const arrivalMinute =
+  departureMinute + elapsedMinutes;
+
+const lateMinutes =
+  Math.max(0, arrivalMinute - deadlineMinute);
+
+const isLate = lateMinutes &gt; 0;</pre><p>ถ้าระยะสะสม 5 กม. ความเร็ว 30 กม./ชม. จะใช้เวลา <code>5 / 30 * 60 = 10</code> นาที หากออก 11:30 จะถึงประมาณ 11:40 และยังไม่สายก่อน Deadline 12:30</p><p>โค้ดนี้ไม่ได้หาความเร็วจาก GPS จริง แต่เป็นการประมาณเพื่อเปรียบเทียบแผน การอธิบายอย่างถูกต้องจึงควรใช้คำว่า “เวลาประมาณการ”</p></div>
+<h2>24. ตัวอย่างโค้ดคำนวณต้นทุน</h2>
+<div class="card"><pre>const revenue =
+  trip.totalBoxes * COST_RULES.pricePerBox;
+
+const foodCost =
+  trip.totalBoxes * COST_RULES.foodCostPerBox;
+
+const dispatchCost =
+  COST_RULES.dispatchCostPerTrip;
+
+const transportCost =
+  distanceKm *
+  trip.totalBoxes *
+  COST_RULES.transportCostPerKmPerBox;
+
+const totalCost =
+  foodCost + dispatchCost +
+  transportCost + estimatedPenalty;
+
+const profit = revenue - totalCost;</pre><p>สมมติ 6 กล่อง ระยะทางคิดเงิน 2 กม. รายรับคือ 6×65 = 390 บาท ต้นทุนอาหาร 6×40 = 240 บาท ค่ารอบ 15 บาท และค่าระยะทาง 2×6×2 = 24 บาท ต้นทุนก่อนค่าปรับ 279 บาท กำไรเบื้องต้น 111 บาท</p><p>ค่าปรับคิดต่อออเดอร์ที่สาย ไม่ใช่ต่อจำนวนกล่อง ดังนั้นต้องไม่เอาจำนวนกล่องไปคูณค่าปรับซ้ำ</p></div>
+<h2>25. ตัวอย่างโค้ด Backend ตอน Login</h2>
+<div class="card"><pre>riderAuthRouter.post("/worksheet", async (req, res) =&gt; {
+  const worksheetCode =
+    normalizeWorksheetCode(req.body?.worksheetCode);
+
+  if (!worksheetCode) {
+    res.status(400).json({
+      message: "กรุณากรอกเลขใบงาน"
+    });
+    return;
+  }
+
+  const session =
+    await findValidWorksheet(worksheetCode);
+
+  if (!session) {
+    res.status(401).json({
+      message: "เลขใบงานไม่ถูกต้อง หรือไม่มีงานสำหรับวันนี้"
+    });
+    return;
+  }
+
+  res.status(200).json({
+    worksheetCode: session.worksheetCode,
+    rider: session.rider
+  });
+});</pre><p>ลำดับคือ Normalize Code ให้รูปแบบเดียวกัน, ตรวจค่าว่าง, ค้นหาใบงานที่ valid และคืนข้อมูล Rider กลับไป การคืนข้อมูลนี้ทำให้หน้าเว็บรู้ชื่อ Rider เพื่อแสดงผล แต่ Request ถัดไปยังต้องส่ง Code ใน Header เพื่อให้ Backend ตรวจซ้ำ</p></div>
+<h2>26. ตัวอย่างโค้ด Middleware ตรวจใบงาน</h2>
+<div class="card"><pre>const rawCode = req.header("x-worksheet-code");
+const worksheetCode = normalize(rawCode);
+
+if (!worksheetCode) {
+  res.status(401).json({
+    message: "กรุณาระบุเลขใบงาน"
+  });
+  return;
+}
+
+const session =
+  await findValidWorksheet(worksheetCode);
+
+req.riderId = session.riderId;
+req.routePlanId = session.routePlanId;
+req.worksheetCode = session.worksheetCode;
+next();</pre><p>Middleware ทำงานก่อน Controller ของ <code>/rider/work</code> และ <code>/rider/auth/me</code> ถ้า Code ไม่ถูกต้อง Controller จะไม่ถูกเรียกเลย จุดนี้เรียกว่า Middleware เป็นด่านกลางสำหรับตรวจสิทธิ์</p><p>การใช้ <code>riderId</code> และ <code>routePlanId</code> ที่ Backend หาเอง ป้องกันไม่ให้ผู้ใช้แก้ Request เป็น ID ของคนอื่น</p></div>
+<h2>27. ตัวอย่าง SQL ที่ทำให้รู้ว่าใบงานเป็นของใคร</h2>
+<div class="card"><pre>FROM route_plans AS route_plan
+INNER JOIN route_stops AS route_stop
+  ON route_stop.route_plan_id =
+     route_plan.route_plan_id
+INNER JOIN riders AS rider
+  ON rider.rider_id = route_stop.rider_id
+WHERE route_plan.worksheet_code = $1
+  AND route_plan.route_date = BUSINESS_DATE
+  AND route_plan.status = 'SELECTED'</pre><p><code>$1</code> คือ Worksheet Code ที่ส่งจาก Header ไม่ใช่ค่าที่ต่อ String ลง SQL โดยตรง การใช้ Parameterized Query ช่วยป้องกัน SQL Injection และช่วยให้ฐานข้อมูลจัดการชนิดข้อมูลได้ถูกต้อง</p><p>ถ้า Code ตรงแต่ใบงานเป็นของวันเก่า หรือสถานะไม่ใช่ <code>SELECTED</code> ก็จะไม่ผ่านการตรวจ</p></div>
+<h2>28. ตัวอย่าง API Service ฝั่ง Rider</h2>
+<div class="card"><pre>async loginByWorksheet(code: string) {
+  const response = await lastValueFrom(
+    this.http.post(
+      API + "/rider/auth/worksheet",
+      { worksheetCode: code }
+    )
+  );
+
+  localStorage.setItem(
+    "rider_worksheet_code",
+    response.worksheetCode
+  );
+  return response;
+}
+
+async getWork(code: string) {
+  return lastValueFrom(
+    this.http.get(API + "/rider/work", {
+      headers: { "x-worksheet-code": code }
+    })
+  );
+}</pre><p>Service เป็นตัวเชื่อมระหว่าง Component กับ Backend การเก็บ Code ใน Local Storage ทำให้เมื่อ Rider เปิดหน้า Work หรือ Refresh หน้าเว็บยังสามารถส่ง Code เดิมได้ จนกว่าจะ Logout หรือ Code ใช้ไม่ได้</p></div>
+<h2>29. ตัวอย่างการสร้าง QR</h2>
+<div class="card"><pre>const loginUrl =
+  baseUrl +
+  "?worksheetCode=" +
+  encodeURIComponent(rider.worksheet_code);
+
+const qrUrl =
+  "https://api.qrserver.com/v1/create-qr-code/"
+  + "?size=240x240&amp;data="
+  + encodeURIComponent(loginUrl);</pre><p>QR เป็นเพียงรูปแบบการเข้ารหัส URL ให้กล้องอ่านง่าย ขั้นตอนจริงคือ “สร้าง URL → เข้ารหัส URL เป็น QR → กล้องเปิด URL → Angular อ่าน Query Param → POST Login”</p><p>ถ้า QR เปิดหน้า Login แต่ไม่เข้าใบงาน ให้ตรวจ 4 จุด: Worksheet Code ในฐานข้อมูล, URL Frontend ใน QR, Query Param ชื่อ <code>worksheetCode</code> และ Backend Endpoint</p></div>
+<h2>30. ตัวอย่างการสร้าง Map และ Marker</h2>
+<div class="card"><pre>this.map = L.map(element)
+  .setView([storeLat, storeLon], 15);
+
+L.tileLayer(
+  "https://api.maptiler.com/maps/streets-v4/" +
+  "{z}/{x}/{y}.png?key=" + MAPTILER_API_KEY
+).addTo(this.map);
+
+L.circleMarker([customerLat, customerLon])
+  .bindTooltip("จุดส่ง")
+  .addTo(this.map);</pre><p><code>element</code> คือ div ใน HTML ที่ใช้เป็นพื้นที่แผนที่ <code>setView</code> กำหนดจุดศูนย์กลาง <code>tileLayer</code> โหลดภาพแผนที่ทีละช่องตาม Zoom/พิกัด และ Marker แสดงตำแหน่งลูกค้า</p><p>API Key ต้องมาจาก Environment ไม่ควรเขียนค่าจริงลงโค้ด และควรจำกัด Allowed HTTP Origins ใน MapTiler</p></div>
+<h2>31. ตัวอย่างการวาดเส้นตามถนน</h2>
+<div class="card"><pre>const coordinates = points
+  .map(([lat, lon]) =&gt; lon + "," + lat)
+  .join(";");
+
+fetch(
+  "https://router.project-osrm.org/route/v1/driving/"
+  + coordinates
+  + "?overview=full&amp;geometries=geojson"
+)
+  .then(response =&gt; response.json())
+  .then(data =&gt; {
+    const roadPoints =
+      data.routes[0].geometry.coordinates
+        .map(([lon, lat]) =&gt; [lat, lon]);
+
+    L.polyline(roadPoints).addTo(map);
+  });</pre><p>OSRM ส่งพิกัดเป็นลำดับ <code>[longitude, latitude]</code> ตามมาตรฐาน GeoJSON แต่ Leaflet ใช้ <code>[latitude, longitude]</code> จึงต้องสลับลำดับก่อนวาด เส้นจึงไม่กลับด้าน</p><p>ถ้า OSRM ล้มเหลว ระบบมี Fallback วาดเส้นตรงระหว่างจุด เพื่อให้ผู้ใช้ยังเห็นความสัมพันธ์ของจุด แต่ต้องเข้าใจว่านั่นไม่ใช่เส้นถนนจริง</p></div>
+<h2>32. หน้า Rider Work เช็คสถานะอย่างไร</h2>
+<div class="card"><pre>const [rider, work] = await Promise.all([
+  auth.getMe(),
+  workApi.getWork(auth.getWorksheetCode())
+]);
+
+this.rider.set(rider);
+this.work.set(work);</pre><p>ถ้า <code>getMe</code> หรือ <code>getWork</code> ล้มเหลว จะเข้า <code>catch</code> และแสดงข้อความให้ Login ใหม่ ถ้าสำเร็จ HTML จะอ่าน <code>work.stops</code> ว่ามีกี่จุด</p><pre>totalStops = stops.length
+pendingStops = stops.filter(
+  stop =&gt; stop.status !== "DELIVERED"
+).length</pre><p>เมื่อ Rider เปลี่ยนสถานะ จุดนั้น Frontend เรียก <code>PATCH /route-stops/:id/status</code> และ Backend ตรวจว่า Route Stop เป็นของ Rider/Worksheet นั้นจริง ก่อน Update</p></div>
+<h2>33. การออกแบบ Transaction ตอนบันทึกใบงาน</h2>
+<div class="card"><pre>BEGIN
+  lock today's selected plans
+  validate orders and riders
+  INSERT route_plans
+  INSERT route_stops
+  UPDATE orders SET status = 'ASSIGNED'
+COMMIT
+
+ถ้ามี Error:
+ROLLBACK</pre><p>Transaction ทำให้หลายคำสั่งฐานข้อมูลถูกมองเป็นงานเดียว ถ้า Insert จุดส่งรายการที่ 4 ล้มเหลว รายการก่อนหน้าก็ไม่ควรค้างอยู่ในฐานข้อมูล</p><p>นี่เป็นเหตุผลสำคัญที่การกด Confirm ต้องทำที่ Backend ไม่ใช่ให้ Frontend ยิงคำสั่ง SQL แยกเอง</p></div>
+<h2>34. ทำไมวันที่ถึงเป็นปัญหาได้</h2><div class="card"><p>ระบบมีวันที่ธุรกิจ เช่น <code>BUSINESS_DATE_SQL</code> เพื่อให้ Orders, Route Plans, Riders และ Worksheet ใช้วันเดียวกัน หากใช้เวลาท้องถิ่นไม่ตรงกัน ออเดอร์อาจถูกมองว่าเป็นเมื่อวานหรือพรุ่งนี้</p><p>เวลาตรวจปัญหาให้ดู:</p><ul><li><code>orders.order_date</code></li><li><code>route_plans.route_date</code></li><li>ค่าธุรกิจที่ Backend คำนวณ</li><li>Timezone ของ Neon และ Vercel</li><li>Query ที่หน้า Frontend ส่งวันที่ไป</li></ul></div>
+<h2>35. PostgreSQL, Neon และ Vercel เชื่อมกันอย่างไร</h2><div class="card"><pre>Angular Frontend on Vercel
+       │ HTTPS API
+       ▼
+Express Backend on Vercel
+       │ DATABASE_URL
+       ▼
+Neon PostgreSQL</pre><p>Frontend ไม่ควรต่อ Neon โดยตรง เพราะจะเปิดเผยสิทธิ์ฐานข้อมูลให้ Browser Backend เป็นผู้ถือ <code>DATABASE_URL</code> และเป็นผู้ควบคุม SQL</p><p>Neon เป็น PostgreSQL ที่ให้บริการบน Cloud ส่วน Vercel เป็นแพลตฟอร์ม Deploy/รันเว็บและ Function ไม่ใช่ฐานข้อมูลแทน Neon</p></div>
+<h2>36. ทำไมไม่ใช้ Supabase</h2><div class="card"><p>Supabase ก็ใช้ PostgreSQL แต่มีบริการ Auth, Storage, Realtime และ Auto API รอบฐานข้อมูล หากทีมเลือก Supabase จะต้องออกแบบการเชื่อมต่อและสิทธิ์ให้เข้ากับ Supabase Client/RLS</p><p>โปรเจกต์นี้ใช้ Express ควบคุมกฎธุรกิจและใช้แพ็กเกจ PostgreSQL <code>pg</code> ต่อ Neon โดยตรง ดังนั้นเปลี่ยนไป Supabase ไม่ใช่แค่เปลี่ยน URL แต่ต้องพิจารณา Auth, API, Security Policy และวิธี Query ใหม่</p></div>
+<h2>37. Checklist อธิบายโค้ดหนึ่งฟังก์ชัน</h2><table><tr><th>คำถาม</th><th>สิ่งที่ต้องตอบ</th></tr><tr><td>รับค่าอะไร?</td><td>Request Body, Query, Param, Header หรือค่าจาก State</td></tr><tr><td>ตรวจอะไร?</td><td>ชนิดข้อมูล ค่าว่าง ขอบเขต สถานะ วัน และสิทธิ์</td></tr><tr><td>เรียกอะไรต่อ?</td><td>Service, SQL, OSRM หรือ Component method</td></tr><tr><td>คืนค่าอะไร?</td><td>JSON, Status Code หรือ State ที่เปลี่ยน</td></tr><tr><td>ข้อมูลไปอยู่ไหน?</td><td>Database, Local Storage, signal หรือ Map object</td></tr><tr><td>ถ้าพังเกิดอะไร?</td><td>Error response, fallback, loading false หรือข้อความแจ้งเตือน</td></tr></table>
+<h2>38. ตอบอาจารย์เมื่อถูกขอให้เปิดโค้ดให้ดู</h2><div class="lead"><p>เริ่มจากเปิด <code>app.routes.ts</code> เพื่อชี้ URL จากนั้นเปิด Component ของหน้า Delivery Routes ชี้ฟังก์ชันคำนวณและ API Service ต่อด้วย <code>backend/controller/route-plan.ts</code> ให้เห็น Endpoint Road Matrix และ Confirm แล้วเปิด <code>route-optimizer.ts</code>, <code>route-timing.ts</code>, <code>route-cost.ts</code> เพื่ออธิบายวิธีคิด สุดท้ายเปิด <code>selected-plan.ts</code> และ Schema เพื่อแสดงว่าผลถูกบันทึกเป็น Route Plan/Route Stop และเปลี่ยน Order Status อย่างไร</p></div>
+</main><footer>หากต้องการจำแบบเร็ว ให้กลับไปอ่าน <a href="index.html">ภาพรวม</a> แล้วใช้หน้านี้เป็นหลักฐานอธิบายเชิงโค้ด</footer></body></html>
